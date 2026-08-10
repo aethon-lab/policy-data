@@ -1,0 +1,8 @@
+{
+  "head": {"vars": ["membership", "senator", "group", "group_name", "start", "end", "role"]},
+  "results": {"bindings": [
+    {"membership": {"type": "uri", "value": "http://dati.senato.it/afferenza/1"}, "senator": {"type": "uri", "value": "http://dati.senato.it/senatore/36401"}, "group": {"type": "uri", "value": "http://dati.senato.it/gruppo/19-1"}, "group_name": {"type": "literal", "value": "Gruppo Alfa"}, "start": {"type": "literal", "value": "2022-10-13"}, "end": {"type": "literal", "value": "2024-03-01"}, "role": {"type": "literal", "value": "Membro"}},
+    {"membership": {"type": "uri", "value": "http://dati.senato.it/afferenza/2"}, "senator": {"type": "uri", "value": "http://dati.senato.it/senatore/36401"}, "group": {"type": "uri", "value": "http://dati.senato.it/gruppo/19-2"}, "group_name": {"type": "literal", "value": "Gruppo Beta"}, "start": {"type": "literal", "value": "2024-03-02"}, "role": {"type": "literal", "value": "Membro"}},
+    {"membership": {"type": "uri", "value": "http://dati.senato.it/afferenza/3"}, "senator": {"type": "uri", "value": "http://dati.senato.it/senatore/36402"}, "group": {"type": "uri", "value": "http://dati.senato.it/gruppo/19-1"}, "group_name": {"type": "literal", "value": "Gruppo Alfa"}, "start": {"type": "literal", "value": "2022-10-13"}, "role": {"type": "literal", "value": "Membro"}}
+  ]}
+}

@@ -1,0 +1,7 @@
+{
+  "head": {"vars": ["senator", "first_name", "last_name", "mandate", "start", "end", "disclosure_url", "disclosure_year", "same_as"]},
+  "results": {"bindings": [
+    {"senator": {"type": "uri", "value": "http://dati.senato.it/senatore/36401"}, "first_name": {"type": "literal", "value": "Ada"}, "last_name": {"type": "literal", "value": "Rossi"}, "mandate": {"type": "uri", "value": "http://dati.senato.it/mandato/S_19_36401_1"}, "start": {"type": "literal", "value": "2022-10-13"}, "disclosure_url": {"type": "uri", "value": "https://www.senato.it/documenti/redditi/36401-2024.pdf"}, "disclosure_year": {"type": "literal", "value": "2024"}, "same_as": {"type": "uri", "value": "http://dati.camera.it/ocd/persona.rdf/p36401"}},
+    {"senator": {"type": "uri", "value": "http://dati.senato.it/senatore/36402"}, "first_name": {"type": "literal", "value": "Bruno"}, "last_name": {"type": "literal", "value": "Bianchi"}, "mandate": {"type": "uri", "value": "http://dati.senato.it/mandato/S_19_36402_1"}, "start": {"type": "literal", "value": "2022-10-13"}}
+  ]}
+}
