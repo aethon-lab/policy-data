@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
+    csrf_digest TEXT NOT NULL,
     revoked_at TEXT
 );
 CREATE TABLE IF NOT EXISTS api_keys (
