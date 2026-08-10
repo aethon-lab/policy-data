@@ -207,8 +207,18 @@ def parse_vote_detail(html: str) -> CameraVoteDetail:
 
 
 def _graph(body: bytes) -> Graph:
-    reject_xml_dtd(body)
-    return Graph().parse(data=body, format="xml")
+    stripped = body.lstrip(b"\xef\xbb\xbf\x00\t\r\n ")
+    if stripped.startswith((b"<?xml", b"<rdf:RDF")):
+        reject_xml_dtd(body)
+        rdf_format = "xml"
+    elif stripped.startswith(b"<"):
+        # Despite their `.rdf` names, the official Camera bulk dumps are
+        # currently serialized as N-Triples. Select the parser from the
+        # content instead of trusting the archive member extension.
+        rdf_format = "nt"
+    else:
+        raise CameraQuarantine("Camera RDF has an unsupported serialization")
+    return Graph().parse(data=body, format=rdf_format)
 
 
 def _required_text(graph: Graph, subject: URIRef, predicate: URIRef, field: str) -> str:

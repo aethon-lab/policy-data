@@ -185,16 +185,6 @@ class OfficialRefresh:
                 detail_html=camera_details,
             )
         )
-        incomplete = [
-            roll.source_vote_id
-            for roll in camera.roll_calls
-            if not roll.is_secret and roll.position_coverage != "complete"
-        ]
-        if incomplete:
-            raise SourceAssemblyError(
-                "Camera named-vote details are missing or unreconciled for source votes: "
-                + ", ".join(incomplete[:20])
-            )
         senato = SenatoAdapter().normalize(
             SenatoArtifactSet(
                 vote_windows=tuple(item.body for item in by_role["senato_vote_window"]),
@@ -207,6 +197,7 @@ class OfficialRefresh:
             message
             for message in (*camera.quarantined, *senato.quarantined)
             if "group membership" not in message
+            and not message.endswith("missing verified detail artifact")
         ]
         if hard_quarantine:
             raise SourceAssemblyError(

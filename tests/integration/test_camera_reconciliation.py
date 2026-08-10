@@ -1,9 +1,33 @@
 from pathlib import Path
 
+from rdflib import Graph
+
 from policy_data.domain.enums import VotePosition
 from policy_data.sources.camera import CameraArtifactSet, CameraAdapter
 
 FIXTURES = Path("tests/fixtures/camera")
+
+
+def _as_ntriples(path: Path) -> bytes:
+    graph = Graph().parse(path, format="xml")
+    serialized = graph.serialize(format="nt")
+    return serialized.encode() if isinstance(serialized, str) else serialized
+
+
+def test_camera_accepts_the_ntriples_serialization_used_by_official_dumps() -> None:
+    result = CameraAdapter().normalize(
+        CameraArtifactSet(
+            votes_rdf=_as_ntriples(FIXTURES / "votes.rdf"),
+            deputies_rdf=_as_ntriples(FIXTURES / "deputies.rdf"),
+            mandates_rdf=_as_ntriples(FIXTURES / "mandates.rdf"),
+            groups_rdf=_as_ntriples(FIXTURES / "groups.rdf"),
+            detail_html={},
+        )
+    )
+
+    assert len(result.roll_calls) == 5
+    assert len(result.people) == 2
+    assert len(result.member_votes) == 2
 
 
 def test_camera_fixture_normalizes_all_official_types_and_reconciles_detail() -> None:
