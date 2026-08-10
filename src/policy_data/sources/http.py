@@ -63,7 +63,16 @@ class SafeFetcher:
         if prior and prior.last_modified:
             headers["if-modified-since"] = prior.last_modified
 
-        url = source.request_url
+        url = source.url if source.query is not None else source.request_url
+        method = "POST" if source.query is not None else "GET"
+        form = (
+            {
+                "query": source.query,
+                "output": "application/sparql-results+json",
+            }
+            if source.query is not None
+            else None
+        )
         timeout = httpx.Timeout(120.0, connect=10.0)
         with httpx.Client(
             transport=self.transport, timeout=timeout, follow_redirects=False
@@ -76,7 +85,7 @@ class SafeFetcher:
                         "redirect target is outside the official allowlist"
                     )
                 _validate_addresses(host, self.resolver)
-                with client.stream("GET", url, headers=headers) as response:
+                with client.stream(method, url, headers=headers, data=form) as response:
                     if response.status_code == 304:
                         if prior is None:
                             raise FetchRejected(

@@ -83,12 +83,26 @@ WHERE {
   ?sitting osr:numeroSeduta ?sitting_number ; osr:dataSeduta ?date .
   OPTIONAL { ?vote osr:oggetto ?object }
   OPTIONAL {
-    ?vote ?position_predicate ?senator .
-    FILTER(?position_predicate IN (
-      osr:favorevole, osr:contrario, osr:astenuto,
-      osr:inCongedoMissione, osr:presenteNonVotante,
-      osr:richiedenteNonVotante, osr:presidente
-    ))
+    { ?vote osr:favorevole ?senator .
+      BIND(osr:favorevole AS ?position_predicate) }
+    UNION
+    { ?vote osr:contrario ?senator .
+      BIND(osr:contrario AS ?position_predicate) }
+    UNION
+    { ?vote osr:astenuto ?senator .
+      BIND(osr:astenuto AS ?position_predicate) }
+    UNION
+    { ?vote osr:inCongedoMissione ?senator .
+      BIND(osr:inCongedoMissione AS ?position_predicate) }
+    UNION
+    { ?vote osr:presenteNonVotante ?senator .
+      BIND(osr:presenteNonVotante AS ?position_predicate) }
+    UNION
+    { ?vote osr:richiedenteNonVotante ?senator .
+      BIND(osr:richiedenteNonVotante AS ?position_predicate) }
+    UNION
+    { ?vote osr:presidente ?senator .
+      BIND(osr:presidente AS ?position_predicate) }
   }
   FILTER(?date >= "__START__"^^xsd:date && ?date <= "__END__"^^xsd:date)
 }

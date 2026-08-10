@@ -4,6 +4,7 @@ import json
 import hashlib
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -51,6 +52,42 @@ def test_valid_body_is_content_addressed_and_reused(tmp_path: Path) -> None:
     assert metadata["publisher"] == "Camera dei deputati"
     assert metadata["license"] == "CC-BY-SA-4.0"
     assert metadata["source_url"] == _source().url
+
+
+def test_sparql_query_uses_bounded_post_body_instead_of_query_string(
+    tmp_path: Path,
+) -> None:
+    source = replace(
+        _source(),
+        source_id="senato-query",
+        publisher="Senato della Repubblica",
+        chamber="senato",
+        url="https://dati.senato.it/sparql",
+        allowed_hosts=frozenset({"dati.senato.it"}),
+        media_types=frozenset({"application/sparql-results+json"}),
+        query="SELECT * WHERE { ?s ?p ?o } LIMIT 1",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.query == b""
+        form = parse_qs(request.content.decode())
+        assert form == {
+            "query": [source.query],
+            "output": ["application/sparql-results+json"],
+        }
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/sparql-results+json"},
+            content=b'{"results":{"bindings":[]}}',
+        )
+
+    artifact = SafeFetcher(
+        ArtifactStore(tmp_path),
+        transport=httpx.MockTransport(handler),
+        resolver=lambda host: ["93.184.216.34"],
+    ).fetch(source)
+    assert artifact.path.read_bytes() == b'{"results":{"bindings":[]}}'
 
 
 def test_html_challenge_and_cross_origin_redirect_are_rejected(tmp_path: Path) -> None:
