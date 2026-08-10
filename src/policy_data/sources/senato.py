@@ -278,6 +278,16 @@ class SenatoAdapter:
                 membership_uri = _required_value(row, "membership")
                 group_uri = _required_value(row, "group")
                 group_name = _required_value(row, "group_name")
+                mandate = mandate_by_person.get(membership_person.person_id)
+                if mandate is None:
+                    raise SenatoQuarantine(f"senator {senator_uri} has no mandate")
+                if start < mandate.started_on or (
+                    mandate.ended_on is not None and start > mandate.ended_on
+                ):
+                    # The official group query can return memberships from a
+                    # senator's earlier legislatures. Keep this adapter scoped
+                    # to the XIX mandate represented by the release.
+                    continue
                 memberships.append(
                     SenatoGroupMembership(
                         membership_uri,

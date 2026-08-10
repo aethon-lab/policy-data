@@ -64,6 +64,30 @@ def test_prior_legislature_uses_the_same_contract_as_xix(tmp_path: Path) -> None
     ).fetchall() == [(18,), (19,)]
 
 
+def test_membership_may_start_and_end_on_the_same_inclusive_date(
+    tmp_path: Path,
+) -> None:
+    connection = _canonical(tmp_path)
+    connection.execute(
+        "INSERT INTO people(person_id, display_name) VALUES ('person:42', 'Ada')"
+    )
+    connection.execute(
+        "INSERT INTO mandates VALUES "
+        "('mandate:42', 'person:42', 19, 'senato', '2022-10-13', NULL)"
+    )
+    connection.execute(
+        "INSERT INTO political_groups VALUES ('group:42', 19, 'senato', 'Gruppo', NULL)"
+    )
+
+    connection.execute(
+        "INSERT INTO memberships VALUES "
+        "('membership:42', 'mandate:42', 'group:42', 19, 'senato', "
+        "'2022-10-18', '2022-10-18')"
+    )
+
+    assert connection.execute("SELECT COUNT(*) FROM memberships").fetchone()[0] == 1
+
+
 def test_source_identities_are_authority_scoped_and_do_not_auto_merge(
     tmp_path: Path,
 ) -> None:

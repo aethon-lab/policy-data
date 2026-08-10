@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS mandates (
     starts_on TEXT,
     ends_on TEXT,
     UNIQUE(mandate_id, legislature_number, chamber_code),
-    CHECK (ends_on IS NULL OR starts_on IS NULL OR ends_on > starts_on)
+    CHECK (ends_on IS NULL OR starts_on IS NULL OR ends_on >= starts_on)
 );
 
 CREATE TABLE IF NOT EXISTS political_groups (
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS memberships (
         REFERENCES mandates(mandate_id, legislature_number, chamber_code),
     FOREIGN KEY(group_id, legislature_number, chamber_code)
         REFERENCES political_groups(group_id, legislature_number, chamber_code),
-    CHECK (ends_on IS NULL OR ends_on > starts_on)
+    CHECK (ends_on IS NULL OR ends_on >= starts_on)
 );
 
 CREATE TABLE IF NOT EXISTS sittings (
