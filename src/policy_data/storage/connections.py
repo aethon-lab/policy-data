@@ -4,9 +4,11 @@ import sqlite3
 from pathlib import Path
 
 
-def _initialize(path: Path, schema_name: str) -> sqlite3.Connection:
+def _initialize(
+    path: Path, schema_name: str, *, check_same_thread: bool = True
+) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, check_same_thread=check_same_thread)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
     schema_path = Path(__file__).with_name(schema_name)
@@ -19,6 +21,6 @@ def initialize_canonical(path: Path) -> sqlite3.Connection:
 
 
 def initialize_control(path: Path) -> sqlite3.Connection:
-    connection = _initialize(path, "control_schema.sql")
+    connection = _initialize(path, "control_schema.sql", check_same_thread=False)
     connection.execute("PRAGMA journal_mode = WAL")
     return connection

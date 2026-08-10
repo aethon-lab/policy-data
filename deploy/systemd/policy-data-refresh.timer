@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Policy Data Italia release validation
+
+[Timer]
+OnCalendar=*-*-* 05:20:00 Europe/Rome
+RandomizedDelaySec=20m
+Persistent=true
+Unit=policy-data-refresh.service
+
+[Install]
+WantedBy=timers.target

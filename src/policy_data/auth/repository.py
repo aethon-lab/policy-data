@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ class ApiKeyRecord:
 class AuthRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
+        self._lock = threading.Lock()
 
     def create_challenge(
         self,
@@ -38,23 +40,46 @@ class AuthRepository:
         now: datetime,
         expires_at: datetime,
     ) -> None:
-        self.connection.execute(
-            """INSERT INTO otp_challenges(
-                   challenge_id, email_digest, code_digest, state,
-                   provider_idempotency_key, expires_at, created_at
-               ) VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
-            (
-                challenge_id,
-                email_digest,
-                code_digest,
-                idempotency_key,
-                expires_at.isoformat(),
-                now.isoformat(),
-            ),
-        )
-        self.connection.commit()
+        with self._lock:
+            self.connection.execute(
+                """INSERT INTO otp_challenges(
+                       challenge_id, email_digest, code_digest, state,
+                       provider_idempotency_key, expires_at, created_at
+                   ) VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
+                (
+                    challenge_id,
+                    email_digest,
+                    code_digest,
+                    idempotency_key,
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+            self.connection.commit()
 
     def consume_challenge(
+        self,
+        *,
+        challenge_id: str,
+        supplied_digest: str,
+        session_id: str,
+        session_digest: str,
+        csrf_digest: str,
+        now: datetime,
+        session_expires_at: datetime,
+    ) -> SessionRecord | None:
+        with self._lock:
+            return self._consume_challenge(
+                challenge_id=challenge_id,
+                supplied_digest=supplied_digest,
+                session_id=session_id,
+                session_digest=session_digest,
+                csrf_digest=csrf_digest,
+                now=now,
+                session_expires_at=session_expires_at,
+            )
+
+    def _consume_challenge(
         self,
         *,
         challenge_id: str,
@@ -139,6 +164,28 @@ class AuthRepository:
         now: datetime,
         max_active: int = 10,
     ) -> ApiKeyRecord:
+        with self._lock:
+            return self._create_api_key(
+                key_id=key_id,
+                account_id=account_id,
+                lookup_prefix=lookup_prefix,
+                key_digest=key_digest,
+                label=label,
+                now=now,
+                max_active=max_active,
+            )
+
+    def _create_api_key(
+        self,
+        *,
+        key_id: str,
+        account_id: str,
+        lookup_prefix: str,
+        key_digest: str,
+        label: str,
+        now: datetime,
+        max_active: int,
+    ) -> ApiKeyRecord:
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             count = self.connection.execute(
@@ -167,12 +214,13 @@ class AuthRepository:
     def authenticate_api_key(
         self, lookup_prefix: str, digest: str
     ) -> ApiKeyRecord | None:
-        row = self.connection.execute(
-            """SELECT key_id, account_id, lookup_prefix, key_digest, label,
-                      created_at, revoked_at
-                 FROM api_keys WHERE lookup_prefix = ?""",
-            (lookup_prefix,),
-        ).fetchone()
+        with self._lock:
+            row = self.connection.execute(
+                """SELECT key_id, account_id, lookup_prefix, key_digest, label,
+                          created_at, revoked_at
+                     FROM api_keys WHERE lookup_prefix = ?""",
+                (lookup_prefix,),
+            ).fetchone()
         if row is None or row[6] is not None or not hmac.compare_digest(row[3], digest):
             return None
         return ApiKeyRecord(
@@ -180,11 +228,12 @@ class AuthRepository:
         )
 
     def list_api_keys(self, account_id: str) -> tuple[ApiKeyRecord, ...]:
-        rows = self.connection.execute(
-            """SELECT key_id, account_id, lookup_prefix, label, created_at, revoked_at
-                 FROM api_keys WHERE account_id = ? ORDER BY created_at, key_id""",
-            (account_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT key_id, account_id, lookup_prefix, label, created_at, revoked_at
+                     FROM api_keys WHERE account_id = ? ORDER BY created_at, key_id""",
+                (account_id,),
+            ).fetchall()
         return tuple(
             ApiKeyRecord(
                 row[0],
@@ -198,15 +247,32 @@ class AuthRepository:
         )
 
     def revoke_api_key(self, account_id: str, key_id: str, now: datetime) -> bool:
-        changed = self.connection.execute(
-            """UPDATE api_keys SET revoked_at = ?
-                 WHERE account_id = ? AND key_id = ? AND revoked_at IS NULL""",
-            (now.isoformat(), account_id, key_id),
-        ).rowcount
-        self.connection.commit()
+        with self._lock:
+            changed = self.connection.execute(
+                """UPDATE api_keys SET revoked_at = ?
+                     WHERE account_id = ? AND key_id = ? AND revoked_at IS NULL""",
+                (now.isoformat(), account_id, key_id),
+            ).rowcount
+            self.connection.commit()
         return changed == 1
 
     def validate_session(
+        self,
+        token_digest: str,
+        now: datetime,
+        *,
+        idle_ttl: timedelta,
+        absolute_ttl: timedelta,
+    ) -> SessionRecord | None:
+        with self._lock:
+            return self._validate_session(
+                token_digest,
+                now,
+                idle_ttl=idle_ttl,
+                absolute_ttl=absolute_ttl,
+            )
+
+    def _validate_session(
         self,
         token_digest: str,
         now: datetime,
@@ -240,10 +306,11 @@ class AuthRepository:
         return SessionRecord(row[0], row[1], next_expiry)
 
     def verify_csrf_digest(self, session_id: str, supplied_digest: str) -> bool:
-        row = self.connection.execute(
-            "SELECT csrf_digest, revoked_at FROM sessions WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT csrf_digest, revoked_at FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
         return bool(
             row is not None
             and row[1] is None

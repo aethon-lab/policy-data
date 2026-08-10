@@ -39,6 +39,17 @@ class ReleaseManifest:
         ).encode()
 
 
+def parse_manifest(body: bytes) -> ReleaseManifest:
+    value = json.loads(body)
+    if not isinstance(value, dict) or not isinstance(value.get("files"), list):
+        raise ValueError("release manifest has an invalid shape")
+    try:
+        files = tuple(ManifestFile(**entry) for entry in value.pop("files"))
+        return ReleaseManifest(files=files, **value)
+    except (TypeError, KeyError) as error:
+        raise ValueError("release manifest has invalid fields") from error
+
+
 def source_fingerprint(schema_version: int, sources: tuple[object, ...]) -> str:
     values = [
         {

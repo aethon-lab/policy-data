@@ -1,0 +1,4 @@
+services:
+  serve:
+    ports:
+      - "127.0.0.1:${POLICY_DATA_PORT:-8019}:8000"

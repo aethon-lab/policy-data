@@ -1,14 +1,17 @@
 import json
+import stat
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Awaitable, Callable, Protocol
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from policy_data.api.errors import problem
 from policy_data.api.schemas import HealthResponse, VoterPageResponse, VoterResponse
@@ -37,17 +40,24 @@ def create_app(
     release_root: Path,
     enable_mcp: bool = True,
     public_site_url: str = "http://localhost:8000",
+    allowed_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver"),
+    allowed_origins: tuple[str, ...] = ("http://localhost:8000",),
+    shutdown: Callable[[], Awaitable[None]] | None = None,
 ) -> FastAPI:
     mcp_server = create_mcp_server(query_service) if enable_mcp else None
     mcp_app = authenticated_mcp_app(mcp_server, auth_service) if mcp_server else None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        if mcp_server is None:
-            yield
-            return
-        async with mcp_server.session_manager.run():
-            yield
+        try:
+            if mcp_server is None:
+                yield
+            else:
+                async with mcp_server.session_manager.run():
+                    yield
+        finally:
+            if shutdown is not None:
+                await shutdown()
 
     app = FastAPI(
         title="Policy Data Italia API",
@@ -56,6 +66,14 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
+    )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type", "Mcp-Session-Id"],
     )
     bearer = HTTPBearer(auto_error=False, scheme_name="ApiKeyBearer")
     static_root = Path(__file__).parent / "web" / "static"
@@ -110,7 +128,11 @@ def create_app(
         tags=["public"],
     )
     def health() -> HealthResponse:
-        return HealthResponse(status="ok", release_id=read_active_release(release_root))
+        release_id = read_active_release(release_root)
+        return HealthResponse(
+            status="ok" if release_id is not None else "degraded",
+            release_id=release_id,
+        )
 
     @app.get(
         "/api/v1/voters",
@@ -188,11 +210,15 @@ def create_app(
             None,
         )
         path = release_root / "releases" / release_id / filename
+        try:
+            metadata = path.lstat()
+        except OSError:
+            metadata = None
         if (
             entry is None
-            or not path.is_file()
-            or path.is_symlink()
-            or path.stat().st_nlink != 1
+            or metadata is None
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
         ):
             return problem(404, "not-found", "Not found", "Release file not found.")
         return FileResponse(
