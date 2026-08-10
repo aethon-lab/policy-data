@@ -453,6 +453,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "mcp" },
     { name = "pydantic" },
+    { name = "python-multipart" },
     { name = "rdflib" },
     { name = "uvicorn" },
 ]
@@ -472,6 +473,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6,<4" },
     { name = "mcp", specifier = "==2.0.0" },
     { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "python-multipart", specifier = ">=0.0.22,<0.1" },
     { name = "rdflib", specifier = ">=7.1,<8" },
     { name = "uvicorn", specifier = "==0.52.1" },
 ]

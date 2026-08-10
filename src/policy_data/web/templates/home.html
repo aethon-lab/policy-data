@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Policy Data Italia — I voti, alla fonte{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="eyebrow">Archivio parlamentare aperto · XIX legislatura</div>
+  <h1>Segui i voti,<br><em>non gli slogan.</em></h1>
+  <p class="hero-copy">Cerca una legge o un tema e verifica come hanno votato deputati e senatori. Ogni risultato porta al documento ufficiale.</p>
+  <form class="search-box" action="/cerca" method="get">
+    <label class="sr-only" for="q">Legge, provvedimento o tema</label>
+    <input id="q" name="q" placeholder="Es. Superbonus, salario minimo, autonomia…" maxlength="200" required>
+    <button type="submit">Cerca nei voti <span aria-hidden="true">→</span></button>
+  </form>
+  <div class="source-strip"><span>CAMERA</span><b>+</b><span>SENATO</span><b>·</b><span>FONTI UFFICIALI</span><b>·</b><span>AGGIORNAMENTI RIPRODUCIBILI</span></div>
+</section>
+<section class="principles">
+  <article><span>01</span><h2>Tutti i voti pubblicati</h2><p>Non una selezione editoriale: votazioni finali, emendamenti, articoli, fiducie e procedure.</p></article>
+  <article><span>02</span><h2>Il partito di allora</h2><p>L’appartenenza politica viene risolta alla data del voto, senza riscrivere la storia.</p></article>
+  <article><span>03</span><h2>Verificabile alla fonte</h2><p>Legge, voto individuale, provenienza, licenza e release rimangono collegati.</p></article>
+</section>
+<section class="agent-band">
+  <div><div class="eyebrow light">Costruito anche per gli agenti</div><h2>Una domanda. Una risposta citabile.</h2></div>
+  <div class="code-question">“Chi ha votato a favore del Superbonus?”<span>REST · MCP · DOWNLOAD</span></div>
+  <a class="button-light" href="/docs">Esplora l’API</a>
+</section>
+<section class="roadmap-note">
+  <p><strong>Prossimo collegamento:</strong> candidati e circoscrizioni elettorali.</p>
+  <p>Il modello persona è già indipendente dal mandato: quando arriveranno le candidature, potrai chiedere chi nella tua scheda elettorale ha votato una determinata misura.</p>
+</section>
+{% endblock %}

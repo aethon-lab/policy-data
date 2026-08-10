@@ -7,6 +7,7 @@ from typing import Annotated, Any, Protocol
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from policy_data.api.errors import problem
@@ -16,6 +17,7 @@ from policy_data.ingest.publish import read_active_release
 from policy_data.mcp.server import authenticated_mcp_app, create_mcp_server
 from policy_data.query.filters import VoteQuery
 from policy_data.query.results import VoterPage
+from policy_data.web.routes import create_web_router
 
 
 class QueryServiceContract(Protocol):
@@ -34,6 +36,7 @@ def create_app(
     *,
     release_root: Path,
     enable_mcp: bool = True,
+    public_site_url: str = "http://localhost:8000",
 ) -> FastAPI:
     mcp_server = create_mcp_server(query_service) if enable_mcp else None
     mcp_app = authenticated_mcp_app(mcp_server, auth_service) if mcp_server else None
@@ -55,6 +58,15 @@ def create_app(
         lifespan=lifespan,
     )
     bearer = HTTPBearer(auto_error=False, scheme_name="ApiKeyBearer")
+    static_root = Path(__file__).parent / "web" / "static"
+    app.mount("/static", StaticFiles(directory=static_root), name="static")
+    app.include_router(
+        create_web_router(
+            query_service,
+            auth_service,  # type: ignore[arg-type]
+            public_site_url=public_site_url,
+        )
+    )
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]

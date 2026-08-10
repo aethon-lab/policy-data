@@ -133,6 +133,16 @@ class AuthService:
             prefix, api_key_digest(self.pepper, raw)
         )
 
+    def list_api_keys(self, account_id: str) -> tuple[ApiKeyRecord, ...]:
+        return self.repository.list_api_keys(account_id)
+
+    def revoke_api_key(
+        self, account_id: str, key_id: str, *, now: datetime | None = None
+    ) -> bool:
+        return self.repository.revoke_api_key(
+            account_id, key_id, now or datetime.now(UTC)
+        )
+
     def validate_session(
         self, raw: str, *, now: datetime | None = None
     ) -> SessionRecord | None:

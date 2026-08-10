@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Cerca nei voti — Policy Data Italia{% endblock %}
+{% block content %}
+<section class="page-head"><div class="eyebrow">Ricerca parlamentare</div><h1>Chi ha votato <em>cosa?</em></h1></section>
+<form class="filter-bar" action="/cerca" method="get">
+  <input name="q" value="{{ q }}" placeholder="Legge, titolo o tema" maxlength="200" required>
+  <select name="position" aria-label="Posizione"><option value="">Ogni posizione</option><option value="yes" {% if selected_position == 'yes' %}selected{% endif %}>Favorevole</option><option value="no" {% if selected_position == 'no' %}selected{% endif %}>Contrario</option><option value="abstain" {% if selected_position == 'abstain' %}selected{% endif %}>Astenuto</option></select>
+  <select name="chamber" aria-label="Camera"><option value="">Camera e Senato</option><option value="camera" {% if selected_chamber == 'camera' %}selected{% endif %}>Camera</option><option value="senato" {% if selected_chamber == 'senato' %}selected{% endif %}>Senato</option></select>
+  <button>Cerca</button>
+</form>
+{% if error %}<p class="notice">{{ error }}</p>{% endif %}
+{% if page %}
+<div class="results-meta"><strong>{{ page.items|length }}</strong> risultati nella release <code>{{ page.release_id }}</code></div>
+<div class="results">
+{% for item in page.items %}
+  <article class="result-card">
+    <div class="result-person"><span class="position position-{{ item.position.value }}">{{ {'yes':'Favorevole','no':'Contrario','abstain':'Astenuto'}.get(item.position.value, item.position.value) }}</span><h2>{{ item.person_name }}</h2><p>{{ item.group_name_at_vote or 'Gruppo non determinato' }} · {{ 'Camera' if item.chamber.value == 'camera' else 'Senato' }}</p></div>
+    <div class="result-measure"><div class="result-date">{{ item.occurred_at[:10] }} · {{ item.official_type }}</div><h3>{{ item.measure_title or 'Oggetto non collegato' }}</h3><p>Esito: {{ item.official_result or 'non indicato' }}</p><div class="source-links">{% if item.measure_url %}<a href="{{ item.measure_url }}" rel="external">Provvedimento ufficiale ↗</a>{% endif %}{% if item.vote_url %}<a href="{{ item.vote_url }}" rel="external">Scheda del voto ↗</a>{% endif %}</div></div>
+    <div class="attribution">{{ item.publisher }} · {{ item.license_id }}</div>
+  </article>
+{% else %}<div class="empty"><h2>Nessun voto trovato</h2><p>Prova il titolo ufficiale del provvedimento o una parola più generale.</p></div>{% endfor %}
+</div>
+{% elif q and not error %}<div class="empty"><h2>Ricerca in corso</h2></div>{% endif %}
+{% endblock %}
