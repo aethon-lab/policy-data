@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,3 +41,14 @@ def test_overlapping_windows_deduplicate_the_same_vote() -> None:
     result = SenatoAdapter().normalize(_artifacts(window, window))
     assert len(result.roll_calls) == 1
     assert len(result.member_votes) == 2
+
+
+def test_quarantined_vote_does_not_leak_roll_or_earlier_member_rows() -> None:
+    payload = json.loads((FIXTURES / "votes.json").read_bytes())
+    payload["results"]["bindings"][1]["position_predicate"]["value"] = (
+        "http://dati.senato.it/osr/valoreSconosciuto"
+    )
+    result = SenatoAdapter().normalize(_artifacts(json.dumps(payload).encode()))
+    assert result.roll_calls == ()
+    assert result.member_votes == ()
+    assert "unmapped" in result.quarantined[0]

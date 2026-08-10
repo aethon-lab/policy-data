@@ -54,3 +54,26 @@ def test_secret_vote_has_no_manufactured_member_rows() -> None:
     assert not [
         vote for vote in result.member_votes if vote.roll_call_id == secret.roll_call_id
     ]
+
+
+def test_quarantined_detail_does_not_leak_earlier_member_rows() -> None:
+    detail = (
+        (FIXTURES / "vote_detail.html")
+        .read_text()
+        .replace("<td>Astensione</td>", "<td>Valore sconosciuto</td>")
+    )
+    artifacts = CameraArtifactSet(
+        votes_rdf=(FIXTURES / "votes.rdf").read_bytes(),
+        deputies_rdf=(FIXTURES / "deputies.rdf").read_bytes(),
+        mandates_rdf=(FIXTURES / "mandates.rdf").read_bytes(),
+        groups_rdf=(FIXTURES / "groups.rdf").read_bytes(),
+        detail_html={
+            "https://documenti.camera.it/apps/votazioni/votazionitutte/schedaVotazione.asp?Legislatura=19&RifVotazione=599_44&tipo=dettaglio": detail
+        },
+    )
+    result = CameraAdapter().normalize(artifacts)
+    roll = next(vote for vote in result.roll_calls if vote.source_vote_id == "599044")
+    assert roll.position_coverage == "partial"
+    assert not [
+        vote for vote in result.member_votes if vote.roll_call_id == roll.roll_call_id
+    ]

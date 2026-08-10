@@ -43,13 +43,14 @@ def test_group_resolution_handles_changes_and_rejects_ambiguity() -> None:
             "m2", "p1", "g2", "Beta", date(2024, 3, 2), None, "Membro"
         ),
     )
-    assert resolve_group_at_vote(memberships, "p1", date(2024, 2, 20))[0] == "g1"
-    assert resolve_group_at_vote(memberships, "p1", date(2024, 3, 20))[0] == "g2"
-    assert resolve_group_at_vote(memberships, "p1", date(2024, 3, 1))[0] == "g1"
+    assert resolve_group_at_vote(memberships, "p1", date(2024, 2, 20)).group_id == "g1"
+    assert resolve_group_at_vote(memberships, "p1", date(2024, 3, 20)).group_id == "g2"
+    assert resolve_group_at_vote(memberships, "p1", date(2024, 3, 1)).group_id == "g1"
     overlapping = memberships + (
         SenatoGroupMembership(
             "m3", "p1", "g3", "Gamma", date(2024, 2, 1), None, "Membro"
         ),
     )
-    group_id, diagnostic = resolve_group_at_vote(overlapping, "p1", date(2024, 2, 20))
-    assert group_id is None and "ambiguous" in diagnostic
+    resolution = resolve_group_at_vote(overlapping, "p1", date(2024, 2, 20))
+    assert resolution.group_id is None
+    assert resolution.diagnostic is not None and "ambiguous" in resolution.diagnostic

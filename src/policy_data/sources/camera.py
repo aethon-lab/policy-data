@@ -42,7 +42,6 @@ class CameraDetailRow:
 class CameraVoteDetail:
     sitting_number: str
     vote_number: str
-    official_type: str
     title: str | None
     totals: dict[str, int]
     rows: tuple[CameraDetailRow, ...]
@@ -194,12 +193,10 @@ def parse_vote_detail(html: str) -> CameraVoteDetail:
     for cells in parser.rows:
         if len(cells) >= 3 and cells[:3] != ["Nominativo", "Gruppo", "Voto"]:
             rows.append(CameraDetailRow(cells[0], cells[1], cells[2]))
-    first_heading = parser.headings[0][1] if parser.headings else ""
     title = next((text for tag, text in parser.headings if tag == "h4"), None)
     return CameraVoteDetail(
         sitting_number=sitting_match.group(1),
         vote_number=vote_match.group(1),
-        official_type=normalize_vote_type(first_heading),
         title=title,
         totals=totals,
         rows=tuple(rows),
@@ -208,9 +205,7 @@ def parse_vote_detail(html: str) -> CameraVoteDetail:
 
 def _graph(body: bytes) -> Graph:
     reject_xml_dtd(body)
-    graph = Graph()
-    graph.parse(data=body, format="xml")
-    return graph
+    return Graph().parse(data=body, format="xml")
 
 
 def _required_text(graph: Graph, subject: URIRef, predicate: URIRef, field: str) -> str:
@@ -325,6 +320,7 @@ class CameraAdapter:
                         )
                         if expected_identity != source_id:
                             raise CameraQuarantine("RDF/detail vote identity disagrees")
+                        normalized_detail_votes: list[CameraMemberVote] = []
                         for row in detail.rows:
                             candidates = names.get(row.name.casefold(), [])
                             if len(candidates) != 1:
@@ -348,7 +344,7 @@ class CameraAdapter:
                                 raise CameraQuarantine(
                                     f"RDF/detail position disagreement for {row.name}"
                                 )
-                            member_votes.append(
+                            normalized_detail_votes.append(
                                 CameraMemberVote(
                                     stable_roll_id,
                                     mandate.mandate_id,
@@ -357,19 +353,19 @@ class CameraAdapter:
                                     row.group,
                                 )
                             )
+                        member_votes.extend(normalized_detail_votes)
                         coverage = "complete"
                     except CameraQuarantine as error:
                         quarantined.append(f"{source_id}: {error}")
                         coverage = "partial"
+            description_value = votes_graph.value(subject, DC.description)
             roll_calls.append(
                 CameraRollCall(
                     stable_roll_id,
                     str(subject),
                     source_id,
                     title,
-                    str(votes_graph.value(subject, DC.description))
-                    if votes_graph.value(subject, DC.description)
-                    else None,
+                    str(description_value) if description_value is not None else None,
                     normalize_vote_type(raw_type),
                     occurred,
                     detail_url,

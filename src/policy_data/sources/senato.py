@@ -56,6 +56,13 @@ class SenatoGroupMembership:
 
 
 @dataclass(frozen=True, slots=True)
+class GroupResolution:
+    group_id: str | None
+    group_name: str | None
+    diagnostic: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class SenatoDisclosure:
     person_id: str
     year: int
@@ -114,7 +121,7 @@ def map_senato_position(predicate: str) -> VotePosition:
 
 def resolve_group_at_vote(
     memberships: tuple[SenatoGroupMembership, ...], person_id: str, occurred_on: date
-) -> tuple[str | None, str]:
+) -> GroupResolution:
     active = [
         membership
         for membership in memberships
@@ -123,10 +130,10 @@ def resolve_group_at_vote(
         and (membership.ended_on is None or occurred_on <= membership.ended_on)
     ]
     if not active:
-        return None, "no active group membership"
+        return GroupResolution(None, None, "no active group membership")
     if len(active) > 1:
-        return None, "ambiguous active group memberships"
-    return active[0].group_id, active[0].group_name
+        return GroupResolution(None, None, "ambiguous active group memberships")
+    return GroupResolution(active[0].group_id, active[0].group_name, None)
 
 
 def _bindings(body: bytes) -> list[Binding]:
@@ -140,16 +147,20 @@ def _bindings(body: bytes) -> list[Binding]:
     return rows
 
 
-def _value(row: Binding, key: str, *, required: bool = True) -> str | None:
+def _optional_value(row: Binding, key: str) -> str | None:
     cell = row.get(key)
-    value = cell.get("value") if isinstance(cell, dict) else None
-    if value is None and required:
+    return cell.get("value") if isinstance(cell, dict) else None
+
+
+def _required_value(row: Binding, key: str) -> str:
+    value = _optional_value(row, key)
+    if value is None:
         raise SenatoQuarantine(f"Senato binding is missing required {key}")
     return value
 
 
-def _date(row: Binding, key: str, *, required: bool = True) -> date | None:
-    raw = _value(row, key, required=required)
+def _optional_date(row: Binding, key: str) -> date | None:
+    raw = _optional_value(row, key)
     if raw is None:
         return None
     try:
@@ -158,10 +169,18 @@ def _date(row: Binding, key: str, *, required: bool = True) -> date | None:
         raise SenatoQuarantine(f"Senato {key} must be an ISO date") from error
 
 
-def _integer(row: Binding, key: str) -> int:
-    raw = _value(row, key)
+def _required_date(row: Binding, key: str) -> date:
+    raw = _required_value(row, key)
     try:
-        return int(raw) if raw is not None else 0
+        return date.fromisoformat(raw)
+    except ValueError as error:
+        raise SenatoQuarantine(f"Senato {key} must be an ISO date") from error
+
+
+def _integer(row: Binding, key: str) -> int:
+    raw = _required_value(row, key)
+    try:
+        return int(raw)
     except ValueError as error:
         raise SenatoQuarantine(f"Senato {key} must be an integer") from error
 
@@ -183,27 +202,25 @@ class SenatoAdapter:
 
         for row in _bindings(artifacts.people_json):
             try:
-                senator_uri = _value(row, "senator")
-                assert senator_uri is not None
+                senator_uri = _required_value(row, "senator")
                 source_key = senator_uri.rsplit("/", 1)[-1]
                 person = SenatoPerson(
                     canonical_person_id("senato", source_key),
                     source_identity_id("senato", source_key),
                     senator_uri,
-                    f"{_value(row, 'last_name')} {_value(row, 'first_name')}",
+                    f"{_required_value(row, 'last_name')} {_required_value(row, 'first_name')}",
                 )
-                mandate_uri = _value(row, "mandate")
-                started_on = _date(row, "start")
-                assert mandate_uri is not None and started_on is not None
+                mandate_uri = _required_value(row, "mandate")
+                started_on = _required_date(row, "start")
                 mandate = SenatoMandate(
                     mandate_id(person.person_id, self.legislature, self.chamber),
                     person.person_id,
                     mandate_uri,
                     started_on,
-                    _date(row, "end", required=False),
+                    _optional_date(row, "end"),
                 )
-                disclosure_url = _value(row, "disclosure_url", required=False)
-                disclosure_year = _value(row, "disclosure_year", required=False)
+                disclosure_url = _optional_value(row, "disclosure_url")
+                disclosure_year = _optional_value(row, "disclosure_year")
                 if (disclosure_url is None) != (disclosure_year is None):
                     raise SenatoQuarantine(
                         "disclosure URL and year must occur together"
@@ -217,7 +234,7 @@ class SenatoAdapter:
                             artifacts.observed_at,
                         )
                     )
-                same_as = _value(row, "same_as", required=False)
+                same_as = _optional_value(row, "same_as")
                 if same_as:
                     crosswalks.append(same_as)
             except (SenatoQuarantine, ValueError) as error:
@@ -231,16 +248,14 @@ class SenatoAdapter:
         memberships: list[SenatoGroupMembership] = []
         for row in _bindings(artifacts.groups_json):
             try:
-                senator_uri = _value(row, "senator")
-                membership_person = person_by_uri.get(senator_uri or "")
+                senator_uri = _required_value(row, "senator")
+                membership_person = person_by_uri.get(senator_uri)
                 if membership_person is None:
                     raise SenatoQuarantine(f"unknown senator {senator_uri}")
-                start = _date(row, "start")
-                membership_uri = _value(row, "membership")
-                group_uri = _value(row, "group")
-                group_name = _value(row, "group_name")
-                assert start is not None
-                assert membership_uri and group_uri and group_name
+                start = _required_date(row, "start")
+                membership_uri = _required_value(row, "membership")
+                group_uri = _required_value(row, "group")
+                group_name = _required_value(row, "group_name")
                 memberships.append(
                     SenatoGroupMembership(
                         membership_uri,
@@ -248,69 +263,67 @@ class SenatoAdapter:
                         group_uri,
                         group_name,
                         start,
-                        _date(row, "end", required=False),
-                        _value(row, "role", required=False),
+                        _optional_date(row, "end"),
+                        _optional_value(row, "role"),
                     )
                 )
             except SenatoQuarantine as error:
                 quarantined.append(f"membership: {error}")
 
-        vote_rows: dict[tuple[str, str], Binding] = {}
+        memberships_by_person: dict[str, list[SenatoGroupMembership]] = {}
+        for membership in memberships:
+            memberships_by_person.setdefault(membership.person_id, []).append(
+                membership
+            )
+
+        rows_by_vote: dict[str, dict[str, Binding]] = {}
         for window in artifacts.vote_windows:
             for row in _bindings(window):
-                vote_uri = _value(row, "vote")
-                senator_uri = _value(row, "senator")
-                assert vote_uri and senator_uri
-                vote_rows[(vote_uri, senator_uri)] = row
+                vote_uri = _required_value(row, "vote")
+                senator_uri = _required_value(row, "senator")
+                rows_by_vote.setdefault(vote_uri, {})[senator_uri] = row
 
         roll_calls: list[SenatoRollCall] = []
         member_votes: list[SenatoMemberVote] = []
-        rows_by_vote: dict[str, list[Binding]] = {}
-        for (vote_uri, _), row in vote_rows.items():
-            rows_by_vote.setdefault(vote_uri, []).append(row)
-        for vote_uri, rows in sorted(rows_by_vote.items()):
+        for vote_uri, rows_by_senator in sorted(rows_by_vote.items()):
+            rows = list(rows_by_senator.values())
             representative = rows[-1]
             try:
                 source_vote_id = vote_uri.rsplit("/", 1)[-1]
                 stable_roll_id = roll_call_id(
                     self.legislature, self.chamber, source_vote_id
                 )
-                occurred_on = _date(representative, "date")
-                sitting_uri = _value(representative, "sitting")
-                title = _value(representative, "title")
-                vote_type = _value(representative, "vote_type")
-                result = _value(representative, "result")
-                assert occurred_on and sitting_uri and title and vote_type and result
-                roll_calls.append(
-                    SenatoRollCall(
-                        stable_roll_id,
-                        vote_uri,
-                        source_vote_id,
-                        sitting_uri,
-                        _integer(representative, "sitting_number"),
-                        occurred_on,
-                        _integer(representative, "number"),
-                        title,
-                        vote_type,
-                        result,
-                        {
-                            key: _integer(representative, key)
-                            for key in (
-                                "present",
-                                "voting",
-                                "yes",
-                                "no",
-                                "abstain",
-                                "legal_number",
-                                "majority",
-                            )
-                        },
-                        _value(representative, "object", required=False),
-                    )
+                occurred_on = _required_date(representative, "date")
+                normalized_roll_call = SenatoRollCall(
+                    stable_roll_id,
+                    vote_uri,
+                    source_vote_id,
+                    _required_value(representative, "sitting"),
+                    _integer(representative, "sitting_number"),
+                    occurred_on,
+                    _integer(representative, "number"),
+                    _required_value(representative, "title"),
+                    _required_value(representative, "vote_type"),
+                    _required_value(representative, "result"),
+                    {
+                        key: _integer(representative, key)
+                        for key in (
+                            "present",
+                            "voting",
+                            "yes",
+                            "no",
+                            "abstain",
+                            "legal_number",
+                            "majority",
+                        )
+                    },
+                    _optional_value(representative, "object"),
                 )
+                normalized_member_votes: list[SenatoMemberVote] = []
+                group_diagnostics: list[str] = []
                 for row in rows:
-                    senator_uri = _value(row, "senator")
-                    vote_person = person_by_uri.get(senator_uri or "")
+                    senator_uri = _required_value(row, "senator")
+                    vote_person = person_by_uri.get(senator_uri)
                     if vote_person is None:
                         raise SenatoQuarantine(
                             f"vote references unknown senator {senator_uri}"
@@ -320,26 +333,29 @@ class SenatoAdapter:
                         raise SenatoQuarantine(
                             f"vote senator {senator_uri} has no mandate"
                         )
-                    raw_position = _value(row, "position_predicate")
-                    assert raw_position is not None
-                    group_id, group_description = resolve_group_at_vote(
-                        tuple(memberships), vote_person.person_id, occurred_on
+                    raw_position = _required_value(row, "position_predicate")
+                    group_resolution = resolve_group_at_vote(
+                        tuple(memberships_by_person.get(vote_person.person_id, ())),
+                        vote_person.person_id,
+                        occurred_on,
                     )
-                    group_name = group_description if group_id is not None else None
-                    if group_id is None:
-                        quarantined.append(
-                            f"{source_vote_id}/{senator_uri}: {group_description}"
+                    if group_resolution.diagnostic is not None:
+                        group_diagnostics.append(
+                            f"{source_vote_id}/{senator_uri}: {group_resolution.diagnostic}"
                         )
-                    member_votes.append(
+                    normalized_member_votes.append(
                         SenatoMemberVote(
                             stable_roll_id,
                             vote_mandate.mandate_id,
                             raw_position,
                             map_senato_position(raw_position),
-                            group_id,
-                            group_name,
+                            group_resolution.group_id,
+                            group_resolution.group_name,
                         )
                     )
+                roll_calls.append(normalized_roll_call)
+                member_votes.extend(normalized_member_votes)
+                quarantined.extend(group_diagnostics)
             except SenatoQuarantine as error:
                 quarantined.append(f"vote {vote_uri}: {error}")
 
