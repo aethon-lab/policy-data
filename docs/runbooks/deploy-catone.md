@@ -6,6 +6,11 @@ never published on all interfaces. Choose exactly one ingress overlay:
 - `compose.loopback.yml` for a host reverse proxy reaching `127.0.0.1:8019`.
 - `compose.proxy.yml` for a reverse proxy attached to an external Docker network.
 
+The live Catone deployment uses `compose.proxy.yml`, joins the existing
+`taxdd-production_default` network, and is served as
+`policy-data.lapolazzati.com` by Caddy. Its Cloudflare DNS record is a proxied
+`A` record to `157.90.66.254` with automatic TTL.
+
 ## Host preparation
 
 1. Install Docker Engine with the Compose plugin and create `/opt/policy-data`.
@@ -38,6 +43,27 @@ proxy addresses before starting the service.
 Run `scripts/smoke_deployed.py --base-url "$PUBLIC_SITE_URL"` after DNS and TLS
 are live. Supply `POLICY_DATA_API_KEY` only through the process environment when
 testing authenticated REST.
+
+The Caddy site block must route directly to the Compose service over the shared
+proxy network; do not publish the application port on the host:
+
+```caddyfile
+policy-data.lapolazzati.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+	reverse_proxy policy-data-serve-1:8000
+}
+```
+
+Preserve `Host`, `Authorization`, and `Mcp-*` request headers. Caddy does this by
+default. Validate the file inside the running proxy container before reloading.
 
 ## Updating code
 
