@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ocd="http://dati.camera.it/ocd/"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/mandatoCamera.rdf/mc999001_19">
+    <ocd:rif_deputato rdf:resource="http://dati.camera.it/ocd/deputato.rdf/d999001_19"/>
+    <dc:date>20221013</dc:date>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/mandatoCamera.rdf/mc999002_19">
+    <ocd:rif_deputato rdf:resource="http://dati.camera.it/ocd/deputato.rdf/d999002_19"/>
+    <dc:date>20221013</dc:date>
+  </rdf:Description>
+</rdf:RDF>

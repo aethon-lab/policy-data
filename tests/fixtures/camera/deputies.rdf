@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:foaf="http://xmlns.com/foaf/0.1/">
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/deputato.rdf/d999001_19">
+    <foaf:firstName>LUCIA</foaf:firstName><foaf:surname>ALBANO</foaf:surname>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/deputato.rdf/d999002_19">
+    <foaf:firstName>ENRICA</foaf:firstName><foaf:surname>ALIFANO</foaf:surname>
+  </rdf:Description>
+</rdf:RDF>

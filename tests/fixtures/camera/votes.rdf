@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:ocd="http://dati.camera.it/ocd/"
+         xmlns:dc="http://purl.org/dc/elements/1.1/"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/votazione.rdf/vs19_599_044">
+    <rdf:type rdf:resource="http://dati.camera.it/ocd/votazione"/>
+    <rdfs:label>Votazione finale PDL n.1311</rdfs:label>
+    <dc:description>Delega al Governo per il sostegno delle attività educative e ricreative non formali</dc:description>
+    <dc:identifier>599044</dc:identifier><dc:date>20260122</dc:date>
+    <dc:type>Votazione finale</dc:type>
+    <dc:relation rdf:resource="https://documenti.camera.it/apps/votazioni/votazionitutte/schedaVotazione.asp?Legislatura=19&amp;RifVotazione=599_44&amp;tipo=dettaglio"/>
+    <ocd:segreta rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">0</ocd:segreta>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/votazione.rdf/vs19_100_001">
+    <rdf:type rdf:resource="http://dati.camera.it/ocd/votazione"/><rdfs:label>Votazione Emendamento PDL n.1</rdfs:label><dc:identifier>100001</dc:identifier><dc:date>20230101</dc:date><dc:type>Emendamento</dc:type><ocd:segreta rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">false</ocd:segreta>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/votazione.rdf/vs19_100_002"><rdf:type rdf:resource="http://dati.camera.it/ocd/votazione"/><rdfs:label>Votazione Articolo PDL n.1</rdfs:label><dc:identifier>100002</dc:identifier><dc:date>20230101</dc:date><dc:type>Articolo</dc:type><ocd:segreta rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">0</ocd:segreta></rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/votazione.rdf/vs19_100_003"><rdf:type rdf:resource="http://dati.camera.it/ocd/votazione"/><rdfs:label>Questione di fiducia</rdfs:label><dc:identifier>100003</dc:identifier><dc:date>20230101</dc:date><dc:type>Fiducia</dc:type><ocd:segreta rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">0</ocd:segreta></rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/votazione.rdf/vs19_100_004"><rdf:type rdf:resource="http://dati.camera.it/ocd/votazione"/><rdfs:label>Votazione segreta</rdfs:label><dc:identifier>100004</dc:identifier><dc:date>20230101</dc:date><dc:type>Votazione finale</dc:type><ocd:segreta rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</ocd:segreta></rdf:Description>
+</rdf:RDF>
