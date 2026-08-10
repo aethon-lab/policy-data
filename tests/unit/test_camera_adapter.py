@@ -38,11 +38,11 @@ def test_detail_parser_reads_totals_and_member_rows() -> None:
     assert detail.sitting_number == "599"
     assert detail.vote_number == "44"
     assert detail.totals == {
-        "present": 216,
-        "voting": 190,
-        "abstain": 26,
-        "majority": 96,
-        "yes": 190,
+        "present": 2,
+        "voting": 1,
+        "abstain": 1,
+        "majority": 1,
+        "yes": 1,
         "no": 0,
     }
     assert [(row.name, row.group, row.raw_position) for row in detail.rows] == [

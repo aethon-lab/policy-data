@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 from fastapi import FastAPI
+from datetime import UTC, datetime
 
 from policy_data.app import create_app
 from policy_data.auth.repository import AuthRepository
@@ -17,8 +18,10 @@ def build_app() -> FastAPI:
     release_root = settings.data_dir / "published"
     control_connection = initialize_control(settings.data_dir / "control.sqlite3")
     mail_client = httpx.AsyncClient(timeout=10.0)
+    auth_repository = AuthRepository(control_connection)
+    auth_repository.purge_expired_access_state(datetime.now(UTC))
     auth = AuthService(
-        AuthRepository(control_connection),
+        auth_repository,
         ResendClient(
             api_key=settings.resend_api_key,
             sender=settings.resend_sender,

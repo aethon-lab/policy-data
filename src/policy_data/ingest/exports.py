@@ -6,7 +6,8 @@ import hashlib
 import io
 import json
 import os
-from collections.abc import Mapping
+import tempfile
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,32 +48,68 @@ def _csv_value(value: Scalar) -> Scalar:
     return value
 
 
-def _gzip_bytes(body: bytes) -> bytes:
-    output = io.BytesIO()
-    with gzip.GzipFile(fileobj=output, mode="wb", mtime=0) as stream:
-        stream.write(body)
-    return output.getvalue()
+class _HashingWriter:
+    def __init__(self, raw: io.BufferedWriter) -> None:
+        self.raw = raw
+        self.digest = hashlib.sha256()
+        self.byte_count = 0
+
+    def write(self, body: bytes) -> int:
+        written = self.raw.write(body)
+        if written != len(body):
+            raise OSError("short export write")
+        self.digest.update(body)
+        self.byte_count += written
+        return written
+
+    def flush(self) -> None:
+        self.raw.flush()
 
 
-def _write_new_regular_file(path: Path, body: bytes) -> None:
-    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+def _write_gzip_stream(
+    path: Path, write_content: Callable[[gzip.GzipFile], None]
+) -> tuple[str, int]:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "wb", closefd=False) as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-    finally:
-        os.close(descriptor)
+        with os.fdopen(descriptor, "wb") as raw:
+            hashing = _HashingWriter(raw)
+            with gzip.GzipFile(
+                filename="", fileobj=hashing, mode="wb", mtime=0
+            ) as compressed:
+                write_content(compressed)
+            raw.flush()
+            os.fsync(raw.fileno())
+            digest = hashing.digest.hexdigest()
+            byte_count = hashing.byte_count
+        os.chmod(temporary, 0o644)
+        os.link(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        temporary.unlink()
+        return digest, byte_count
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _entry(
-    path: Path, dataset: ExportDataset, row_count: int, media_type: str
+    path: Path,
+    dataset: ExportDataset,
+    row_count: int,
+    media_type: str,
+    digest: str,
+    byte_count: int,
 ) -> ExportFile:
-    body = path.read_bytes()
     return ExportFile(
         path.name,
-        hashlib.sha256(body).hexdigest(),
-        len(body),
+        digest,
+        byte_count,
         row_count,
         media_type,
         "gzip",
@@ -97,27 +134,47 @@ def write_exports(
         seen_chambers.add(chamber)
         fields = sorted({key for row in dataset.rows for key in row})
 
-        csv_buffer = io.StringIO(newline="")
-        writer = csv.DictWriter(csv_buffer, fieldnames=fields, extrasaction="raise")
-        writer.writeheader()
-        for row in dataset.rows:
-            writer.writerow({key: _csv_value(row.get(key)) for key in fields})
         csv_path = root / f"{chamber}-votes.csv.gz"
-        _write_new_regular_file(csv_path, _gzip_bytes(csv_buffer.getvalue().encode()))
-        entries.append(_entry(csv_path, dataset, len(dataset.rows), "text/csv"))
 
-        jsonl = b"".join(
-            (
-                json.dumps(
+        def write_csv(compressed: gzip.GzipFile) -> None:
+            text = io.TextIOWrapper(compressed, encoding="utf-8", newline="")
+            writer = csv.DictWriter(text, fieldnames=fields, extrasaction="raise")
+            writer.writeheader()
+            for row in dataset.rows:
+                writer.writerow({key: _csv_value(row.get(key)) for key in fields})
+            text.flush()
+            text.detach()
+
+        csv_digest, csv_bytes = _write_gzip_stream(csv_path, write_csv)
+        entries.append(
+            _entry(
+                csv_path,
+                dataset,
+                len(dataset.rows),
+                "text/csv",
+                csv_digest,
+                csv_bytes,
+            )
+        )
+
+        jsonl_path = root / f"{chamber}-votes.jsonl.gz"
+
+        def write_jsonl(compressed: gzip.GzipFile) -> None:
+            for row in dataset.rows:
+                line = json.dumps(
                     dict(row), ensure_ascii=False, sort_keys=True, separators=(",", ":")
                 )
-                + "\n"
-            ).encode()
-            for row in dataset.rows
-        )
-        jsonl_path = root / f"{chamber}-votes.jsonl.gz"
-        _write_new_regular_file(jsonl_path, _gzip_bytes(jsonl))
+                compressed.write(f"{line}\n".encode())
+
+        jsonl_digest, jsonl_bytes = _write_gzip_stream(jsonl_path, write_jsonl)
         entries.append(
-            _entry(jsonl_path, dataset, len(dataset.rows), "application/x-ndjson")
+            _entry(
+                jsonl_path,
+                dataset,
+                len(dataset.rows),
+                "application/x-ndjson",
+                jsonl_digest,
+                jsonl_bytes,
+            )
         )
     return tuple(entries)

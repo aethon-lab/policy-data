@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 from policy_data.domain.enums import ChamberCode, VotePosition
@@ -32,9 +34,23 @@ class VoterResponse(BaseModel):
 class VoterPageResponse(BaseModel):
     items: list[VoterResponse]
     release_id: str
+    data_through: str
     next_cursor: str | None
 
 
 class HealthResponse(BaseModel):
     status: str
     release_id: str | None
+
+
+class CanonicalPageResponse(BaseModel):
+    items: list[dict[str, Any]]
+    release_id: str
+    data_through: str
+    next_cursor: str | None
+
+
+class CanonicalRecordResponse(BaseModel):
+    item: dict[str, Any]
+    release_id: str
+    data_through: str

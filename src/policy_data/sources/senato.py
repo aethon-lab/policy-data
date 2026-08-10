@@ -199,26 +199,39 @@ class SenatoAdapter:
         crosswalks: list[str] = []
         person_by_uri: dict[str, SenatoPerson] = {}
         mandate_by_person: dict[str, SenatoMandate] = {}
+        disclosure_keys: set[tuple[str, int, str]] = set()
 
         for row in _bindings(artifacts.people_json):
             try:
                 senator_uri = _required_value(row, "senator")
                 source_key = senator_uri.rsplit("/", 1)[-1]
-                person = SenatoPerson(
-                    canonical_person_id("senato", source_key),
-                    source_identity_id("senato", source_key),
-                    senator_uri,
-                    f"{_required_value(row, 'last_name')} {_required_value(row, 'first_name')}",
-                )
+                person = person_by_uri.get(senator_uri)
+                if person is None:
+                    person = SenatoPerson(
+                        canonical_person_id("senato", source_key),
+                        source_identity_id("senato", source_key),
+                        senator_uri,
+                        f"{_required_value(row, 'last_name')} {_required_value(row, 'first_name')}",
+                    )
                 mandate_uri = _required_value(row, "mandate")
                 started_on = _required_date(row, "start")
-                mandate = SenatoMandate(
-                    mandate_id(person.person_id, self.legislature, self.chamber),
-                    person.person_id,
-                    mandate_uri,
-                    started_on,
-                    _optional_date(row, "end"),
-                )
+                mandate = mandate_by_person.get(person.person_id)
+                if mandate is None:
+                    mandate = SenatoMandate(
+                        mandate_id(person.person_id, self.legislature, self.chamber),
+                        person.person_id,
+                        mandate_uri,
+                        started_on,
+                        _optional_date(row, "end"),
+                    )
+                elif (
+                    mandate.source_uri != mandate_uri
+                    or mandate.started_on != started_on
+                    or mandate.ended_on != _optional_date(row, "end")
+                ):
+                    raise SenatoQuarantine(
+                        f"conflicting XIX mandate rows for {senator_uri}"
+                    )
                 disclosure_url = _optional_value(row, "disclosure_url")
                 disclosure_year = _optional_value(row, "disclosure_year")
                 if (disclosure_url is None) != (disclosure_year is None):
@@ -226,24 +239,32 @@ class SenatoAdapter:
                         "disclosure URL and year must occur together"
                     )
                 if disclosure_url and disclosure_year:
-                    disclosures.append(
-                        SenatoDisclosure(
-                            person.person_id,
-                            int(disclosure_year),
-                            disclosure_url,
-                            artifacts.observed_at,
-                        )
+                    disclosure_key = (
+                        person.person_id,
+                        int(disclosure_year),
+                        disclosure_url,
                     )
+                    if disclosure_key not in disclosure_keys:
+                        disclosure_keys.add(disclosure_key)
+                        disclosures.append(
+                            SenatoDisclosure(
+                                person.person_id,
+                                int(disclosure_year),
+                                disclosure_url,
+                                artifacts.observed_at,
+                            )
+                        )
                 same_as = _optional_value(row, "same_as")
                 if same_as:
                     crosswalks.append(same_as)
             except (SenatoQuarantine, ValueError) as error:
                 quarantined.append(f"person: {error}")
                 continue
-            people.append(person)
-            mandates.append(mandate)
-            person_by_uri[senator_uri] = person
-            mandate_by_person[person.person_id] = mandate
+            if senator_uri not in person_by_uri:
+                people.append(person)
+                mandates.append(mandate)
+                person_by_uri[senator_uri] = person
+                mandate_by_person[person.person_id] = mandate
 
         memberships: list[SenatoGroupMembership] = []
         for row in _bindings(artifacts.groups_json):
@@ -280,8 +301,14 @@ class SenatoAdapter:
         for window in artifacts.vote_windows:
             for row in _bindings(window):
                 vote_uri = _required_value(row, "vote")
-                senator_uri = _required_value(row, "senator")
-                rows_by_vote.setdefault(vote_uri, {})[senator_uri] = row
+                vote_senator_uri = _optional_value(row, "senator")
+                position = _optional_value(row, "position_predicate")
+                row_key = (
+                    f"{position}:{vote_senator_uri}"
+                    if vote_senator_uri is not None and position is not None
+                    else "__metadata__"
+                )
+                rows_by_vote.setdefault(vote_uri, {})[row_key] = row
 
         roll_calls: list[SenatoRollCall] = []
         member_votes: list[SenatoMemberVote] = []
@@ -322,16 +349,18 @@ class SenatoAdapter:
                 normalized_member_votes: list[SenatoMemberVote] = []
                 group_diagnostics: list[str] = []
                 for row in rows:
-                    senator_uri = _required_value(row, "senator")
-                    vote_person = person_by_uri.get(senator_uri)
+                    vote_senator_uri = _optional_value(row, "senator")
+                    if vote_senator_uri is None:
+                        continue
+                    vote_person = person_by_uri.get(vote_senator_uri)
                     if vote_person is None:
                         raise SenatoQuarantine(
-                            f"vote references unknown senator {senator_uri}"
+                            f"vote references unknown senator {vote_senator_uri}"
                         )
                     vote_mandate = mandate_by_person.get(vote_person.person_id)
                     if vote_mandate is None:
                         raise SenatoQuarantine(
-                            f"vote senator {senator_uri} has no mandate"
+                            f"vote senator {vote_senator_uri} has no mandate"
                         )
                     raw_position = _required_value(row, "position_predicate")
                     group_resolution = resolve_group_at_vote(
@@ -341,7 +370,7 @@ class SenatoAdapter:
                     )
                     if group_resolution.diagnostic is not None:
                         group_diagnostics.append(
-                            f"{source_vote_id}/{senator_uri}: {group_resolution.diagnostic}"
+                            f"{source_vote_id}/{vote_senator_uri}: {group_resolution.diagnostic}"
                         )
                     normalized_member_votes.append(
                         SenatoMemberVote(
@@ -353,6 +382,25 @@ class SenatoAdapter:
                             group_resolution.group_name,
                         )
                     )
+                if "segreta" not in normalized_roll_call.vote_type.casefold():
+                    normalized_counts = {
+                        VotePosition.YES: 0,
+                        VotePosition.NO: 0,
+                        VotePosition.ABSTAIN: 0,
+                    }
+                    for member_vote in normalized_member_votes:
+                        if member_vote.position in normalized_counts:
+                            normalized_counts[member_vote.position] += 1
+                    expected_counts = {
+                        VotePosition.YES: normalized_roll_call.totals["yes"],
+                        VotePosition.NO: normalized_roll_call.totals["no"],
+                        VotePosition.ABSTAIN: normalized_roll_call.totals["abstain"],
+                    }
+                    if normalized_counts != expected_counts:
+                        raise SenatoQuarantine(
+                            "normalized positions disagree with official totals "
+                            f"(expected={expected_counts!r}, actual={normalized_counts!r})"
+                        )
                 roll_calls.append(normalized_roll_call)
                 member_votes.extend(normalized_member_votes)
                 quarantined.extend(group_diagnostics)

@@ -11,7 +11,26 @@
     <dc:identifier>599044</dc:identifier><dc:date>20260122</dc:date>
     <dc:type>Votazione finale</dc:type>
     <dc:relation rdf:resource="https://documenti.camera.it/apps/votazioni/votazionitutte/schedaVotazione.asp?Legislatura=19&amp;RifVotazione=599_44&amp;tipo=dettaglio"/>
+    <ocd:rif_attoCamera rdf:resource="http://dati.camera.it/ocd/attocamera.rdf/ac19_1311"/>
+    <ocd:presenti rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">2</ocd:presenti>
+    <ocd:votanti rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</ocd:votanti>
+    <ocd:favorevoli rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</ocd:favorevoli>
+    <ocd:contrari rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">0</ocd:contrari>
+    <ocd:astenuti rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</ocd:astenuti>
+    <ocd:maggioranza rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</ocd:maggioranza>
     <ocd:segreta rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">0</ocd:segreta>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/voto.rdf/vr19_599_044_1">
+    <rdf:type rdf:resource="http://dati.camera.it/ocd/voto"/>
+    <ocd:rif_votazione rdf:resource="http://dati.camera.it/ocd/votazione.rdf/vs19_599_044"/>
+    <ocd:rif_deputato rdf:resource="http://dati.camera.it/ocd/deputato.rdf/d999001_19"/>
+    <dc:type>Favorevole</dc:type>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://dati.camera.it/ocd/voto.rdf/vr19_599_044_2">
+    <rdf:type rdf:resource="http://dati.camera.it/ocd/voto"/>
+    <ocd:rif_votazione rdf:resource="http://dati.camera.it/ocd/votazione.rdf/vs19_599_044"/>
+    <ocd:rif_deputato rdf:resource="http://dati.camera.it/ocd/deputato.rdf/d999002_19"/>
+    <dc:type>Astensione</dc:type>
   </rdf:Description>
   <rdf:Description rdf:about="http://dati.camera.it/ocd/votazione.rdf/vs19_100_001">
     <rdf:type rdf:resource="http://dati.camera.it/ocd/votazione"/><rdfs:label>Votazione Emendamento PDL n.1</rdfs:label><dc:identifier>100001</dc:identifier><dc:date>20230101</dc:date><dc:type>Emendamento</dc:type><ocd:segreta rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">false</ocd:segreta>

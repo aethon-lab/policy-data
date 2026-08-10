@@ -5,7 +5,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from policy_data.domain.enums import ChamberCode, VotePosition
 from policy_data.ingest.publish import read_active_release
@@ -16,10 +16,19 @@ from policy_data.query.pagination import (
     InvalidCursor,
     filter_digest,
 )
-from policy_data.query.results import VoterPage, VoterResult
+from policy_data.query.results import (
+    CanonicalPage,
+    CanonicalRecord,
+    VoterPage,
+    VoterResult,
+)
 
 
 class QueryTimeout(TimeoutError):
+    pass
+
+
+class NoActiveRelease(RuntimeError):
     pass
 
 
@@ -74,7 +83,7 @@ class QueryService:
         self,
         query: VoteQuery,
         *,
-        limit: int = 50,
+        limit: int = 25,
         cursor: str | None = None,
     ) -> VoterPage:
         if isinstance(limit, bool) or limit <= 0 or limit > self.max_page_size:
@@ -94,7 +103,7 @@ class QueryService:
             state.release_id if state else read_active_release(self.release_root)
         )
         if release_id is None:
-            raise RuntimeError("no active canonical release")
+            raise NoActiveRelease("no active canonical release")
 
         clauses = ["votes.normalization_status = 'normalized'"]
         parameters: list[object] = []
@@ -133,7 +142,7 @@ class QueryService:
                     state.vote_id,
                 )
             )
-        parameters.append(limit)
+        parameters.append(limit + 1)
         sql = f"""
             SELECT
                 votes.vote_id, votes.roll_call_id, people.person_id,
@@ -177,6 +186,8 @@ class QueryService:
         """
         with self._connection(release_id) as connection:
             rows = connection.execute(sql, parameters).fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         items = tuple(
             VoterResult(
                 row["vote_id"],
@@ -202,7 +213,7 @@ class QueryService:
             for row in rows
         )
         next_cursor = None
-        if len(items) == limit:
+        if has_more:
             last = items[-1]
             next_cursor = self.cursors.encode(
                 CursorState(
@@ -213,4 +224,256 @@ class QueryService:
                     last.vote_id,
                 )
             )
-        return VoterPage(items, release_id, next_cursor)
+        return VoterPage(items, release_id, next_cursor, self._data_through(release_id))
+
+    def dataset_status(self) -> CanonicalRecord:
+        release_id = self._active_release()
+        with self._connection(release_id) as connection:
+            row = connection.execute(
+                "SELECT release_id, schema_version, source_fingerprint, data_through, created_at FROM releases WHERE release_id = ?",
+                (release_id,),
+            ).fetchone()
+            if row is None:
+                raise NoActiveRelease("active release metadata is unavailable")
+            counts = {
+                table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                for table in ("people", "political_groups", "roll_calls", "votes")
+            }
+        item = dict(row)
+        item["counts"] = counts
+        return CanonicalRecord(item, release_id, row["data_through"])
+
+    def list_legislatures(
+        self, *, limit: int = 25, cursor: str | None = None
+    ) -> CanonicalPage:
+        return self._collection(
+            "legislatures",
+            "number",
+            "SELECT printf('%010d', number) AS record_id, number, roman_numeral FROM legislatures",
+            (),
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def list_people(
+        self, *, text: str | None = None, limit: int = 25, cursor: str | None = None
+    ) -> CanonicalPage:
+        if text is not None and len(text) > 200:
+            raise ValueError("query text cannot exceed 200 characters")
+        where, params = (
+            (" WHERE display_name LIKE ? ESCAPE '\\'", (_like_pattern(text),))
+            if text
+            else ("", ())
+        )
+        return self._collection(
+            "people",
+            "person_id",
+            f"SELECT person_id AS record_id, person_id, display_name FROM people{where}",
+            params,
+            limit=limit,
+            cursor=cursor,
+            filters={"text": text},
+        )
+
+    def get_person(self, person_id: str) -> CanonicalRecord | None:
+        return self._record(
+            """SELECT people.person_id, people.display_name,
+               (SELECT json_group_array(json_object('disclosure_id', d.disclosure_id, 'official_label', d.official_label, 'official_url', d.official_url, 'observed_at', d.observed_at))
+                  FROM mandates m JOIN disclosure_documents d USING(mandate_id)
+                 WHERE m.person_id = people.person_id) AS disclosures
+               FROM people WHERE person_id = ?""",
+            (person_id,),
+            json_fields=("disclosures",),
+        )
+
+    def list_groups(
+        self,
+        *,
+        legislature: int | None = None,
+        chamber: ChamberCode | None = None,
+        limit: int = 25,
+        cursor: str | None = None,
+    ) -> CanonicalPage:
+        clauses: list[str] = []
+        params: list[object] = []
+        if legislature is not None:
+            clauses.append("legislature_number = ?")
+            params.append(legislature)
+        if chamber is not None:
+            clauses.append("chamber_code = ?")
+            params.append(chamber.value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return self._collection(
+            "groups",
+            "group_id",
+            f"SELECT group_id AS record_id, group_id, legislature_number AS legislature, chamber_code AS chamber, name, abbreviation FROM political_groups{where}",
+            tuple(params),
+            limit=limit,
+            cursor=cursor,
+            filters={
+                "legislature": legislature,
+                "chamber": chamber.value if chamber else None,
+            },
+        )
+
+    def list_roll_calls(
+        self,
+        *,
+        text: str | None = None,
+        legislature: int | None = None,
+        chamber: ChamberCode | None = None,
+        limit: int = 25,
+        cursor: str | None = None,
+    ) -> CanonicalPage:
+        if text is not None and len(text) > 200:
+            raise ValueError("query text cannot exceed 200 characters")
+        clauses: list[str] = []
+        params: list[object] = []
+        if text:
+            clauses.append(
+                "(official_title LIKE ? ESCAPE '\\' OR official_description LIKE ? ESCAPE '\\')"
+            )
+            params.extend((_like_pattern(text), _like_pattern(text)))
+        if legislature is not None:
+            clauses.append("legislature_number = ?")
+            params.append(legislature)
+        if chamber is not None:
+            clauses.append("chamber_code = ?")
+            params.append(chamber.value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return self._collection(
+            "roll_calls",
+            "roll_call_id",
+            f"SELECT roll_call_id AS record_id, roll_call_id, legislature_number AS legislature, chamber_code AS chamber, occurred_at, official_type, official_title, official_description, official_result, official_url, position_coverage FROM roll_calls{where}",
+            tuple(params),
+            limit=limit,
+            cursor=cursor,
+            filters={
+                "text": text,
+                "legislature": legislature,
+                "chamber": chamber.value if chamber else None,
+            },
+        )
+
+    def get_roll_call(self, roll_call_id: str) -> CanonicalRecord | None:
+        return self._record(
+            "SELECT roll_call_id, legislature_number AS legislature, chamber_code AS chamber, occurred_at, official_type, official_title, official_description, official_result, official_url, present_count, voting_count, yes_count, no_count, abstain_count, position_coverage FROM roll_calls WHERE roll_call_id = ?",
+            (roll_call_id,),
+        )
+
+    def list_person_votes(
+        self, person_id: str, *, limit: int = 25, cursor: str | None = None
+    ) -> VoterPage:
+        return self.find_voters(
+            VoteQuery(person_id=person_id), limit=limit, cursor=cursor
+        )
+
+    def list_roll_call_positions(
+        self, roll_call_id: str, *, limit: int = 25, cursor: str | None = None
+    ) -> CanonicalPage:
+        return self._collection(
+            "roll_call_positions",
+            "vote_id",
+            """SELECT votes.vote_id AS record_id, votes.vote_id, votes.roll_call_id, people.person_id, people.display_name AS person_name, votes.raw_position, votes.normalized_position AS position, votes.group_id_at_vote
+            FROM votes JOIN mandates USING(mandate_id, legislature_number, chamber_code) JOIN people USING(person_id)
+            WHERE votes.roll_call_id = ? AND votes.normalization_status = 'normalized'""",
+            (roll_call_id,),
+            limit=limit,
+            cursor=cursor,
+            filters={"roll_call_id": roll_call_id},
+        )
+
+    def list_disclosures(
+        self,
+        *,
+        person_id: str | None = None,
+        limit: int = 25,
+        cursor: str | None = None,
+    ) -> CanonicalPage:
+        where = " WHERE mandates.person_id = ?" if person_id else ""
+        params: tuple[object, ...] = (person_id,) if person_id else ()
+        return self._collection(
+            "disclosures",
+            "disclosure_id",
+            f"""SELECT disclosure_documents.disclosure_id AS record_id, disclosure_documents.disclosure_id, mandates.person_id, disclosure_documents.official_label, disclosure_documents.official_url, disclosure_documents.observed_at
+            FROM disclosure_documents JOIN mandates USING(mandate_id){where}""",
+            params,
+            limit=limit,
+            cursor=cursor,
+            filters={"person_id": person_id},
+        )
+
+    def _active_release(self) -> str:
+        release_id = read_active_release(self.release_root)
+        if release_id is None:
+            raise NoActiveRelease("no active canonical release")
+        return release_id
+
+    def _data_through(self, release_id: str) -> str:
+        with self._connection(release_id) as connection:
+            row = connection.execute(
+                "SELECT data_through FROM releases WHERE release_id = ?", (release_id,)
+            ).fetchone()
+        if row is None:
+            raise NoActiveRelease("release metadata is unavailable")
+        return str(row[0])
+
+    def _record(
+        self, sql: str, params: tuple[object, ...], *, json_fields: tuple[str, ...] = ()
+    ) -> CanonicalRecord | None:
+        release_id = self._active_release()
+        with self._connection(release_id) as connection:
+            row = connection.execute(sql, params).fetchone()
+            meta = connection.execute(
+                "SELECT data_through FROM releases WHERE release_id = ?", (release_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        item: dict[str, Any] = dict(row)
+        for field in json_fields:
+            item[field] = __import__("json").loads(item[field] or "[]")
+        return CanonicalRecord(item, release_id, str(meta[0]))
+
+    def _collection(
+        self,
+        name: str,
+        key: str,
+        select_sql: str,
+        params: tuple[object, ...],
+        *,
+        limit: int,
+        cursor: str | None,
+        filters: dict[str, object] | None = None,
+    ) -> CanonicalPage:
+        if isinstance(limit, bool) or limit <= 0 or limit > self.max_page_size:
+            raise ValueError(f"limit must be between 1 and {self.max_page_size}")
+        digest = filter_digest({"collection": name, **(filters or {})})
+        state = self.cursors.decode(cursor) if cursor else None
+        if state is not None and (
+            state.filter_digest != digest or state.roll_call_id != name
+        ):
+            raise InvalidCursor("cursor does not belong to this collection")
+        release_id = state.release_id if state else self._active_release()
+        outer = f"SELECT * FROM ({select_sql}) records"
+        query_params = list(params)
+        if state is not None:
+            outer += " WHERE record_id > ?"
+            query_params.append(state.vote_id)
+        outer += " ORDER BY record_id LIMIT ?"
+        query_params.append(limit + 1)
+        with self._connection(release_id) as connection:
+            rows = connection.execute(outer, query_params).fetchall()
+            meta = connection.execute(
+                "SELECT data_through FROM releases WHERE release_id = ?", (release_id,)
+            ).fetchone()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = tuple(
+            {k: row[k] for k in row.keys() if k != "record_id"} for row in rows
+        )
+        next_cursor = None
+        if has_more:
+            next_cursor = self.cursors.encode(
+                CursorState(release_id, digest, "", name, str(rows[-1]["record_id"]))
+            )
+        return CanonicalPage(items, release_id, str(meta[0]), next_cursor)

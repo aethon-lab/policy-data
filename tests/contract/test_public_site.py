@@ -1,8 +1,10 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from policy_data.app import create_app
+from policy_data.auth.service import SESSION_COOKIE_MAX_AGE
 from policy_data.domain.enums import ChamberCode, VotePosition
 from policy_data.query.results import VoterPage, VoterResult
 
@@ -83,3 +85,24 @@ def test_anonymous_dashboard_is_no_store(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert "nessuna password" in response.text
+
+
+def test_login_cookies_match_the_session_absolute_lifetime(tmp_path: Path) -> None:
+    class LoginAuthService(FakeAuthService):
+        def verify_code(self, challenge_id: str, code: str, *, source_ip: str):
+            assert source_ip == "testclient"
+            return SimpleNamespace(
+                generated=SimpleNamespace(raw_token="session", csrf_token="csrf")
+            )
+
+    app = create_app(
+        FakeQueryService(), LoginAuthService(), release_root=tmp_path, enable_mcp=False
+    )
+    response = TestClient(app).post(
+        "/auth/verify-code", data={"challenge_id": "challenge", "code": "123456"}
+    )
+
+    assert response.history[0].status_code == 303
+    cookies = response.history[0].headers.get_list("set-cookie")
+    assert len(cookies) == 2
+    assert all(f"Max-Age={SESSION_COOKIE_MAX_AGE}" in cookie for cookie in cookies)

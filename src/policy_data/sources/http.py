@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import html
 import ipaddress
+import re
 import socket
-from collections.abc import Callable
-from urllib.parse import urljoin, urlparse
+from collections.abc import Callable, Iterable
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 
@@ -51,14 +54,17 @@ class SafeFetcher:
 
     def fetch(self, source: SourceDefinition) -> StoredArtifact:
         prior = self.store.latest(source.source_id)
-        headers = {"accept": ", ".join(sorted(source.media_types))}
+        headers = {
+            "accept": ", ".join(sorted(source.media_types)),
+            "user-agent": "PolicyDataItalia/0.1 (official-source refresh)",
+        }
         if prior and prior.etag:
             headers["if-none-match"] = prior.etag
         if prior and prior.last_modified:
             headers["if-modified-since"] = prior.last_modified
 
-        url = source.url
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        url = source.request_url
+        timeout = httpx.Timeout(120.0, connect=10.0)
         with httpx.Client(
             transport=self.transport, timeout=timeout, follow_redirects=False
         ) as client:
@@ -94,6 +100,19 @@ class SafeFetcher:
                         media_type == "text/html"
                         and "text/html" not in source.media_types
                     ):
+                        challenge_body = b"".join(
+                            self._bounded_chunks(response.iter_bytes(), 16_384)
+                        )
+                        challenge_url = self._camera_challenge_url(url, challenge_body)
+                        if challenge_url is not None:
+                            url = challenge_url
+                            headers.pop("if-none-match", None)
+                            headers.pop("if-modified-since", None)
+                            continue
+                    if (
+                        media_type == "text/html"
+                        and "text/html" not in source.media_types
+                    ):
                         raise FetchRejected(
                             "HTML browser challenge is not an accepted artifact"
                         )
@@ -101,24 +120,84 @@ class SafeFetcher:
                         raise FetchRejected(
                             f"unexpected media type: {media_type or 'missing'}"
                         )
-                    chunks: list[bytes] = []
-                    total = 0
-                    for chunk in response.iter_bytes():
-                        total += len(chunk)
-                        if total > source.max_bytes:
-                            raise FetchRejected("source exceeded maximum byte count")
-                        chunks.append(chunk)
-                    body = b"".join(chunks)
-                    if (
-                        media_type == "text/html"
-                        and b"challenge" in body[:8192].lower()
-                    ):
-                        raise FetchRejected("HTML browser challenge body rejected")
-                    return self.store.persist(
-                        source,
-                        body,
-                        media_type=media_type,
-                        etag=response.headers.get("etag"),
-                        last_modified=response.headers.get("last-modified"),
-                    )
+                    try:
+                        return self.store.persist_stream(
+                            source,
+                            self._checked_chunks(response.iter_bytes(), media_type),
+                            max_bytes=source.max_bytes,
+                            media_type=media_type,
+                            etag=response.headers.get("etag"),
+                            last_modified=response.headers.get("last-modified"),
+                        )
+                    except ValueError as error:
+                        if "maximum byte count" in str(error):
+                            raise FetchRejected(str(error)) from error
+                        raise
         raise FetchRejected("too many redirects")
+
+    @staticmethod
+    def _bounded_chunks(chunks: Iterable[bytes], maximum: int) -> Iterable[bytes]:
+        total = 0
+        for chunk in chunks:
+            total += len(chunk)
+            if total > maximum:
+                raise FetchRejected("HTML challenge exceeded byte bound")
+            yield chunk
+
+    @staticmethod
+    def _camera_challenge_url(url: str, body: bytes) -> str | None:
+        text = body.decode("utf-8", errors="strict")
+        if "js-challenge-form" not in text:
+            return None
+        action_match = re.search(
+            r'<form id="js-challenge-form" action="([^"]+)" method="get">', text
+        )
+        hint_match = re.search(r'name="hint" value="([0-9a-f]{32,4096})"', text)
+        x_match = re.search(r"var x\s*=\s*(\d{1,12})\s*;", text)
+        digest_match = re.search(r'var y\s*=\s*"([0-9a-f]{40})"\s*;', text)
+        if (
+            action_match is None
+            or hint_match is None
+            or x_match is None
+            or digest_match is None
+        ):
+            raise FetchRejected("unknown Camera browser challenge shape")
+        parsed = urlparse(url)
+        action = urlparse(urljoin(url, html.unescape(action_match.group(1))))
+        if (
+            action.scheme != parsed.scheme
+            or action.hostname != parsed.hostname
+            or action.path != parsed.path
+        ):
+            raise FetchRejected("Camera challenge action changed source path")
+        start = int(x_match.group(1))
+        expected = digest_match.group(1)
+        answer = next(
+            (
+                candidate
+                for candidate in range(100)
+                if hashlib.sha1(str(start + candidate).encode()).hexdigest() == expected
+            ),
+            None,
+        )
+        if answer is None:
+            raise FetchRejected("Camera browser challenge proof is unsatisfied")
+        query = parse_qsl(action.query, keep_blank_values=True)
+        query.extend((("hint", hint_match.group(1)), ("answer", str(answer))))
+        return urlunparse(action._replace(query=urlencode(query)))
+
+    @staticmethod
+    def _checked_chunks(chunks: Iterable[bytes], media_type: str) -> Iterable[bytes]:
+        prefix = bytearray()
+        checked = media_type != "text/html"
+        for chunk in chunks:
+            if not checked:
+                remaining = 8192 - len(prefix)
+                prefix.extend(chunk[:remaining])
+                if len(prefix) == 8192:
+                    checked = True
+                    if b"challenge" in prefix.lower():
+                        raise FetchRejected("HTML browser challenge body rejected")
+            yield chunk
+        if not checked and b"challenge" in prefix.lower():
+            raise FetchRejected("HTML browser challenge body rejected")

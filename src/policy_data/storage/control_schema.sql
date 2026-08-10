@@ -23,6 +23,24 @@ CREATE TABLE IF NOT EXISTS otp_challenges (
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+UPDATE otp_challenges AS older
+   SET state = 'expired'
+ WHERE state = 'pending'
+   AND EXISTS (
+       SELECT 1
+         FROM otp_challenges AS newer
+        WHERE newer.email_digest = older.email_digest
+          AND newer.state = 'pending'
+          AND (
+              newer.created_at > older.created_at
+              OR (
+                  newer.created_at = older.created_at
+                  AND newer.challenge_id > older.challenge_id
+              )
+          )
+   );
+CREATE UNIQUE INDEX IF NOT EXISTS one_pending_otp_per_email
+    ON otp_challenges(email_digest) WHERE state = 'pending';
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(account_id),

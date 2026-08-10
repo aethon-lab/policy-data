@@ -25,4 +25,4 @@ RUN python -m pip install --no-cache-dir /wheels/* \
 WORKDIR /app
 USER 10001:10001
 EXPOSE 8000
-CMD ["uvicorn", "policy_data.runtime:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-proxy-headers", "--access-log"]
+CMD ["uvicorn", "policy_data.runtime:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--access-log"]

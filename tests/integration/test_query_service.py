@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,17 @@ def test_measure_query_returns_people_positions_links_and_provenance(
 
 def test_cursor_is_signed_and_pins_retained_release(tmp_path: Path) -> None:
     _release(tmp_path, "release-a", "Superbonus old")
+    database = tmp_path / "releases" / "release-a" / "canonical.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.execute("INSERT INTO people VALUES ('person:2', 'Bruno Bianchi')")
+    connection.execute(
+        "INSERT INTO mandates VALUES ('mandate:2', 'person:2', 19, 'camera', '2022-10-13', NULL)"
+    )
+    connection.execute(
+        "INSERT INTO votes VALUES ('vote:2', 'roll:1', 'mandate:2', 19, 'camera', 'Favorevole', 'yes', 'normalized', 'group:1')"
+    )
+    connection.commit()
+    connection.close()
     _activate(tmp_path, "release-a")
     service = QueryService(tmp_path, cursor_secret=b"x" * 32)
     first = service.find_voters(VoteQuery(text="Superbonus"), limit=1)
@@ -132,6 +144,16 @@ def test_cursor_is_signed_and_pins_retained_release(tmp_path: Path) -> None:
         )
 
 
+def test_exact_terminal_page_has_no_cursor(tmp_path: Path) -> None:
+    _release(tmp_path, "release-a", "Superbonus")
+    _activate(tmp_path, "release-a")
+    page = QueryService(tmp_path, cursor_secret=b"x" * 32).find_voters(
+        VoteQuery(text="Superbonus"), limit=1
+    )
+    assert page.next_cursor is None
+    assert page.data_through == "2026-01-22"
+
+
 def test_hostile_text_is_data_and_text_is_bounded(tmp_path: Path) -> None:
     _release(tmp_path, "release-a", "A normal law")
     _activate(tmp_path, "release-a")
@@ -140,3 +162,42 @@ def test_hostile_text_is_data_and_text_is_bounded(tmp_path: Path) -> None:
     assert page.items == ()
     with pytest.raises(ValueError, match="200"):
         VoteQuery(text="x" * 201)
+
+
+def test_canonical_resources_share_release_metadata(tmp_path: Path) -> None:
+    _release(tmp_path, "release-a", "Conversione Superbonus")
+    _activate(tmp_path, "release-a")
+    service = QueryService(tmp_path, cursor_secret=b"x" * 32)
+
+    pages = (
+        service.list_legislatures(),
+        service.list_people(text="Ada"),
+        service.list_groups(legislature=19, chamber=ChamberCode.CAMERA),
+        service.list_roll_calls(text="Votazione", legislature=19),
+        service.list_roll_call_positions("roll:1"),
+        service.list_disclosures(person_id="person:1"),
+    )
+    assert all(page.release_id == "release-a" for page in pages)
+    assert all(page.data_through == "2026-01-22" for page in pages)
+    assert pages[0].items[0]["number"] == 19
+    assert pages[1].items[0]["person_id"] == "person:1"
+    assert pages[4].items[0]["position"] == "yes"
+
+    assert service.get_person("person:1").item["disclosures"] == []  # type: ignore[union-attr]
+    assert service.get_roll_call("roll:1").item["official_result"] == "approved"  # type: ignore[union-attr]
+    assert service.dataset_status().item["counts"]["votes"] == 1
+
+
+def test_structural_queries_use_canonical_indexes(tmp_path: Path) -> None:
+    _release(tmp_path, "release-a", "Superbonus")
+    database = tmp_path / "releases" / "release-a" / "canonical.sqlite3"
+    connection = sqlite3.connect(database)
+    plan = " ".join(
+        str(row)
+        for row in connection.execute(
+            "EXPLAIN QUERY PLAN SELECT vote_id FROM votes WHERE roll_call_id = ? AND normalization_status = 'normalized' ORDER BY vote_id",
+            ("roll:1",),
+        )
+    )
+    connection.close()
+    assert "idx_votes_roll_call_order" in plan

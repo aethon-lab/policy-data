@@ -13,9 +13,10 @@ from fastapi.responses import (
 from starlette.concurrency import run_in_threadpool
 from starlette.templating import Jinja2Templates
 
+from policy_data.auth.service import SESSION_COOKIE_MAX_AGE
 from policy_data.domain.enums import ChamberCode, VotePosition
 from policy_data.query.filters import VoteQuery
-from policy_data.query.results import VoterPage
+from policy_data.query.results import CanonicalPage, CanonicalRecord, VoterPage
 
 PACKAGE_ROOT = Path(__file__).parent
 templates = Jinja2Templates(directory=PACKAGE_ROOT / "templates")
@@ -26,11 +27,50 @@ class QueryServiceContract(Protocol):
         self, query: VoteQuery, *, limit: int = 50, cursor: str | None = None
     ) -> VoterPage: ...
 
+    def list_people(
+        self, *, text: str | None, limit: int, cursor: str | None
+    ) -> CanonicalPage: ...
+
+    def get_person(self, person_id: str) -> CanonicalRecord | None: ...
+
+    def list_person_votes(
+        self, person_id: str, *, limit: int, cursor: str | None
+    ) -> VoterPage: ...
+
+    def list_roll_calls(
+        self,
+        *,
+        text: str | None,
+        legislature: int | None,
+        chamber: ChamberCode | None,
+        limit: int,
+        cursor: str | None,
+    ) -> CanonicalPage: ...
+
+    def get_roll_call(self, roll_call_id: str) -> CanonicalRecord | None: ...
+
+    def list_roll_call_positions(
+        self, roll_call_id: str, *, limit: int, cursor: str | None
+    ) -> CanonicalPage: ...
+
+    def list_groups(
+        self,
+        *,
+        legislature: int | None,
+        chamber: ChamberCode | None,
+        limit: int,
+        cursor: str | None,
+    ) -> CanonicalPage: ...
+
+    def dataset_status(self) -> CanonicalRecord: ...
+
 
 class AuthServiceContract(Protocol):
-    async def request_code(self, email: str) -> Any: ...
+    async def request_code(self, email: str, *, source_ip: str) -> Any: ...
 
-    def verify_code(self, challenge_id: str, code: str) -> Any | None: ...
+    def verify_code(
+        self, challenge_id: str, code: str, *, source_ip: str
+    ) -> Any | None: ...
 
     def validate_session(self, raw: str) -> Any | None: ...
 
@@ -95,6 +135,105 @@ def create_web_router(
     def docs(request: Request) -> Response:
         return templates.TemplateResponse(request=request, name="docs.html", context={})
 
+    @router.get("/politici", response_class=HTMLResponse, include_in_schema=False)
+    async def people(request: Request, q: str = "") -> Response:
+        page, error = await _web_query(
+            query_service.list_people, text=q.strip() or None, limit=50, cursor=None
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="people.html",
+            context={"page": page, "q": q.strip(), "error": error},
+        )
+
+    @router.get(
+        "/politici/{person_id}", response_class=HTMLResponse, include_in_schema=False
+    )
+    async def person(request: Request, person_id: str) -> Response:
+        record, error = await _web_query(query_service.get_person, person_id)
+        votes = None
+        if record is not None:
+            votes, votes_error = await _web_query(
+                query_service.list_person_votes,
+                person_id,
+                limit=50,
+                cursor=None,
+            )
+            error = error or votes_error
+        return templates.TemplateResponse(
+            request=request,
+            name="person.html",
+            context={"record": record, "votes": votes, "error": error},
+            status_code=404 if record is None and error is None else 200,
+        )
+
+    @router.get("/votazioni", response_class=HTMLResponse, include_in_schema=False)
+    async def roll_calls(
+        request: Request,
+        q: str = "",
+        chamber: ChamberCode | None = None,
+    ) -> Response:
+        page, error = await _web_query(
+            query_service.list_roll_calls,
+            text=q.strip() or None,
+            legislature=19,
+            chamber=chamber,
+            limit=50,
+            cursor=None,
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="roll_calls.html",
+            context={"page": page, "q": q.strip(), "chamber": chamber, "error": error},
+        )
+
+    @router.get(
+        "/votazioni/{roll_call_id}",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
+    async def roll_call(request: Request, roll_call_id: str) -> Response:
+        record, error = await _web_query(query_service.get_roll_call, roll_call_id)
+        positions = None
+        if record is not None:
+            positions, positions_error = await _web_query(
+                query_service.list_roll_call_positions,
+                roll_call_id,
+                limit=50,
+                cursor=None,
+            )
+            error = error or positions_error
+        return templates.TemplateResponse(
+            request=request,
+            name="roll_call.html",
+            context={"record": record, "positions": positions, "error": error},
+            status_code=404 if record is None and error is None else 200,
+        )
+
+    @router.get("/gruppi", response_class=HTMLResponse, include_in_schema=False)
+    async def groups(request: Request) -> Response:
+        page, error = await _web_query(
+            query_service.list_groups,
+            legislature=19,
+            chamber=None,
+            limit=100,
+            cursor=None,
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="groups.html",
+            context={"page": page, "error": error},
+        )
+
+    @router.get("/dati", response_class=HTMLResponse, include_in_schema=False)
+    async def data_status(request: Request) -> Response:
+        record, error = await _web_query(query_service.dataset_status)
+        return templates.TemplateResponse(
+            request=request,
+            name="data_status.html",
+            context={"record": record, "error": error},
+        )
+
     @router.get("/docs/api", response_class=HTMLResponse, include_in_schema=False)
     def api_docs(request: Request) -> Response:
         return templates.TemplateResponse(
@@ -139,7 +278,9 @@ def create_web_router(
     )
     async def request_code(request: Request, email: str = Form(...)) -> Response:
         try:
-            result = await auth_service.request_code(email)
+            result = await auth_service.request_code(
+                email, source_ip=_source_ip(request)
+            )
             challenge_id = result.challenge_id
         except (ValueError, RuntimeError):
             challenge_id = ""
@@ -151,8 +292,14 @@ def create_web_router(
         )
 
     @router.post("/auth/verify-code", include_in_schema=False)
-    def verify_code(challenge_id: str = Form(...), code: str = Form(...)) -> Response:
-        verified = auth_service.verify_code(challenge_id, code)
+    def verify_code(
+        request: Request,
+        challenge_id: str = Form(...),
+        code: str = Form(...),
+    ) -> Response:
+        verified = auth_service.verify_code(
+            challenge_id, code, source_ip=_source_ip(request)
+        )
         if verified is None:
             return RedirectResponse("/dashboard?errore=codice", status_code=303)
         response = RedirectResponse("/dashboard", status_code=303)
@@ -162,7 +309,7 @@ def create_web_router(
             secure=True,
             httponly=True,
             samesite="lax",
-            max_age=30 * 24 * 60 * 60,
+            max_age=SESSION_COOKIE_MAX_AGE,
         )
         response.set_cookie(
             "policy_csrf",
@@ -170,7 +317,7 @@ def create_web_router(
             secure=True,
             httponly=True,
             samesite="lax",
-            max_age=30 * 24 * 60 * 60,
+            max_age=SESSION_COOKIE_MAX_AGE,
         )
         response.headers["Cache-Control"] = "no-store"
         return response
@@ -220,7 +367,18 @@ def create_web_router(
     @router.get("/sitemap.xml", include_in_schema=False)
     def sitemap() -> Response:
         base = public_site_url.rstrip("/")
-        paths = ("", "/cerca", "/docs", "/docs/api", "/docs/mcp", "/privacy")
+        paths = (
+            "",
+            "/cerca",
+            "/politici",
+            "/votazioni",
+            "/gruppi",
+            "/dati",
+            "/docs",
+            "/docs/api",
+            "/docs/mcp",
+            "/privacy",
+        )
         urls = "".join(f"<url><loc>{base}{path}</loc></url>" for path in paths)
         return Response(
             f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>',
@@ -228,6 +386,13 @@ def create_web_router(
         )
 
     return router
+
+
+async def _web_query(method: Any, *args: Any, **kwargs: Any) -> tuple[Any, str | None]:
+    try:
+        return await run_in_threadpool(method, *args, **kwargs), None
+    except (RuntimeError, ValueError):
+        return None, "I dati non sono ancora disponibili. Riprova tra poco."
 
 
 def _browser_session(
@@ -241,6 +406,10 @@ def _browser_session(
     if session is None or not auth_service.verify_csrf(session.session_id, raw_csrf):
         return None, None
     return session, raw_csrf
+
+
+def _source_ip(request: Request) -> str:
+    return request.client.host if request.client is not None else "unknown"
 
 
 def _llms_text(public_site_url: str) -> str:

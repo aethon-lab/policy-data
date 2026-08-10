@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +19,9 @@ class SourceDefinition:
     max_bytes: int
     license_id: str
     adapter_version: str
+    role: str | None = None
+    archive_member: str | None = None
+    query: str | None = None
 
     def __post_init__(self) -> None:
         host = (urlparse(self.url).hostname or "").lower()
@@ -33,6 +36,22 @@ class SourceDefinition:
         if not self.media_types:
             raise ValueError(f"source {self.source_id}: media types are required")
 
+    @property
+    def request_url(self) -> str:
+        if self.query is None:
+            return self.url
+        separator = "&" if "?" in self.url else "?"
+        return (
+            self.url
+            + separator
+            + urlencode(
+                {
+                    "query": self.query,
+                    "output": "application/sparql-results+json",
+                }
+            )
+        )
+
 
 class SourceRegistry:
     def __init__(self, sources: list[SourceDefinition]) -> None:
@@ -45,23 +64,36 @@ class SourceRegistry:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
         sources = []
         for item in raw.get("sources", []):
-            sources.append(
-                SourceDefinition(
-                    source_id=item["id"],
-                    publisher=item["publisher"],
-                    dataset=item["dataset"],
-                    legislature=item["legislature"],
-                    chamber=item["chamber"],
-                    url=item["url"],
-                    allowed_hosts=frozenset(
-                        host.lower() for host in item["allowed_hosts"]
-                    ),
-                    media_types=frozenset(item["media_types"]),
-                    max_bytes=item["max_bytes"],
-                    license_id=item["license"],
-                    adapter_version=item["adapter_version"],
+            windows = item.get("date_windows") or (None,)
+            for window in windows:
+                query = item.get("query")
+                source_id = item["id"]
+                if window is not None:
+                    if not isinstance(window, list) or len(window) != 2 or not query:
+                        raise ValueError(f"source {source_id}: invalid date window")
+                    start, end = window
+                    query = query.replace("__START__", start).replace("__END__", end)
+                    source_id = f"{source_id}-{start}-{end}"
+                sources.append(
+                    SourceDefinition(
+                        source_id=source_id,
+                        publisher=item["publisher"],
+                        dataset=item["dataset"],
+                        legislature=item["legislature"],
+                        chamber=item["chamber"],
+                        url=item["url"],
+                        allowed_hosts=frozenset(
+                            host.lower() for host in item["allowed_hosts"]
+                        ),
+                        media_types=frozenset(item["media_types"]),
+                        max_bytes=item["max_bytes"],
+                        license_id=item["license"],
+                        adapter_version=item["adapter_version"],
+                        role=item.get("role"),
+                        archive_member=item.get("archive_member"),
+                        query=query,
+                    )
                 )
-            )
         if not sources:
             raise ValueError("source registry is empty")
         return cls(sources)

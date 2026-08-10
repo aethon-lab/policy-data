@@ -10,6 +10,7 @@ media_types = ["application/zip", "application/octet-stream"]
 max_bytes = 536870912
 license = "CC-BY-SA-4.0"
 adapter_version = "camera-xix-v1"
+role = "camera_votes_rdf"
 
 [[sources]]
 id = "camera_deputies_xix"
@@ -23,6 +24,7 @@ media_types = ["application/zip", "application/octet-stream"]
 max_bytes = 268435456
 license = "CC-BY-SA-4.0"
 adapter_version = "camera-xix-v1"
+role = "camera_deputies_rdf"
 
 [[sources]]
 id = "camera_mandates_xix"
@@ -36,6 +38,7 @@ media_types = ["application/zip", "application/octet-stream"]
 max_bytes = 268435456
 license = "CC-BY-SA-4.0"
 adapter_version = "camera-xix-v1"
+role = "camera_mandates_rdf"
 
 [[sources]]
 id = "camera_groups_xix"
@@ -49,6 +52,7 @@ media_types = ["application/zip", "application/octet-stream"]
 max_bytes = 134217728
 license = "CC-BY-SA-4.0"
 adapter_version = "camera-xix-v1"
+role = "camera_groups_rdf"
 
 [[sources]]
 id = "senato_votes_xix"
@@ -56,9 +60,117 @@ publisher = "Senato della Repubblica"
 dataset = "Votazioni elettroniche d'Aula della XIX legislatura"
 legislature = 19
 chamber = "senato"
-url = "https://dati.senato.it/DatiSenato/browse/8?legislatura=19&testo_generico=13"
+url = "https://dati.senato.it/sparql"
 allowed_hosts = ["dati.senato.it"]
-media_types = ["text/html", "text/csv", "application/json", "application/xml", "text/xml"]
-max_bytes = 536870912
+media_types = ["application/sparql-results+json", "application/json"]
+max_bytes = 134217728
 license = "CC-BY-3.0"
 adapter_version = "senato-xix-v1"
+role = "senato_vote_window"
+query = '''
+PREFIX osr: <http://dati.senato.it/osr/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?vote ?sitting ?sitting_number ?date ?number ?title ?vote_type ?result
+       ?present ?voting ?yes ?no ?abstain ?legal_number ?majority
+       ?position_predicate ?senator ?object
+WHERE {
+  ?vote a osr:Votazione ; osr:legislatura 19 ; osr:seduta ?sitting ;
+        osr:numero ?number ; rdfs:label ?title ; osr:tipoVotazione ?vote_type ;
+        osr:esito ?result ; osr:presenti ?present ; osr:votanti ?voting ;
+        osr:favorevoli ?yes ; osr:contrari ?no ; osr:astenuti ?abstain ;
+        osr:numeroLegale ?legal_number ; osr:maggioranza ?majority .
+  ?sitting osr:numeroSeduta ?sitting_number ; osr:dataSeduta ?date .
+  OPTIONAL { ?vote osr:oggetto ?object }
+  OPTIONAL {
+    ?vote ?position_predicate ?senator .
+    FILTER(?position_predicate IN (
+      osr:favorevole, osr:contrario, osr:astenuto,
+      osr:inCongedoMissione, osr:presenteNonVotante,
+      osr:richiedenteNonVotante, osr:presidente
+    ))
+  }
+  FILTER(?date >= "__START__"^^xsd:date && ?date <= "__END__"^^xsd:date)
+}
+ORDER BY ?date ?sitting_number ?number ?position_predicate ?senator
+'''
+date_windows = [
+  ["2022-10-13", "2022-12-31"],
+  ["2023-01-01", "2023-03-31"],
+  ["2023-04-01", "2023-06-30"],
+  ["2023-07-01", "2023-09-30"],
+  ["2023-10-01", "2023-12-31"],
+  ["2024-01-01", "2024-03-31"],
+  ["2024-04-01", "2024-06-30"],
+  ["2024-07-01", "2024-09-30"],
+  ["2024-10-01", "2024-12-31"],
+  ["2025-01-01", "2025-03-31"],
+  ["2025-04-01", "2025-06-30"],
+  ["2025-07-01", "2025-09-30"],
+  ["2025-10-01", "2025-12-31"],
+  ["2026-01-01", "2026-03-31"],
+  ["2026-04-01", "2026-06-30"],
+  ["2026-07-01", "2026-12-31"],
+]
+
+[[sources]]
+id = "senato_people_xix"
+publisher = "Senato della Repubblica"
+dataset = "Senatori e mandati della XIX legislatura"
+legislature = 19
+chamber = "senato"
+url = "https://dati.senato.it/sparql"
+allowed_hosts = ["dati.senato.it"]
+media_types = ["application/sparql-results+json", "application/json"]
+max_bytes = 16777216
+license = "CC-BY-3.0"
+adapter_version = "senato-xix-v1"
+role = "senato_people_json"
+query = '''
+PREFIX osr: <http://dati.senato.it/osr/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT DISTINCT ?senator ?first_name ?last_name ?mandate ?start ?end
+       ?disclosure_url ?disclosure_year
+WHERE {
+  ?senator a osr:Senatore ; foaf:firstName ?first_name ;
+           foaf:lastName ?last_name ; osr:mandato ?mandate .
+  ?mandate osr:legislatura 19 ; osr:inizio ?start .
+  OPTIONAL { ?mandate osr:fine ?end }
+  OPTIONAL {
+    ?senator osr:documentoPatrimoniale ?disclosure .
+    ?disclosure osr:url ?disclosure_url ; osr:anno ?disclosure_year .
+  }
+}
+ORDER BY ?last_name ?first_name ?start ?disclosure_year
+'''
+
+[[sources]]
+id = "senato_groups_xix"
+publisher = "Senato della Repubblica"
+dataset = "Adesioni ai gruppi parlamentari della XIX legislatura"
+legislature = 19
+chamber = "senato"
+url = "https://dati.senato.it/sparql"
+allowed_hosts = ["dati.senato.it"]
+media_types = ["application/sparql-results+json", "application/json"]
+max_bytes = 33554432
+license = "CC-BY-3.0"
+adapter_version = "senato-xix-v1"
+role = "senato_groups_json"
+query = '''
+PREFIX ocd: <http://dati.camera.it/ocd/>
+PREFIX osr: <http://dati.senato.it/osr/>
+SELECT DISTINCT ?membership ?senator ?group ?group_name ?start ?end ?role
+WHERE {
+  ?senator a osr:Senatore ; osr:mandato ?mandate ; ocd:aderisce ?membership .
+  ?mandate osr:legislatura 19 .
+  ?membership a ocd:adesioneGruppo ; osr:gruppo ?group ; osr:inizio ?start .
+  OPTIONAL { ?membership osr:fine ?end }
+  OPTIONAL { ?membership osr:carica ?role }
+  ?group osr:denominazione ?denomination .
+  ?denomination osr:titolo ?group_name ; osr:inizio ?name_start .
+  OPTIONAL { ?denomination osr:fine ?name_end }
+  FILTER(?name_start <= ?start && (!BOUND(?name_end) || ?start <= ?name_end))
+}
+ORDER BY ?senator ?start
+'''

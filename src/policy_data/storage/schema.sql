@@ -240,3 +240,23 @@ CREATE TABLE IF NOT EXISTS releases (
     data_through TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+-- Structural filters and joins used by the immutable query service. Free-text
+-- matching deliberately remains escaped LIKE: FTS tokenization would change
+-- official-title semantics and is not required for the bounded structural paths.
+CREATE INDEX IF NOT EXISTS idx_mandates_person_scope
+    ON mandates(person_id, legislature_number, chamber_code, mandate_id);
+CREATE INDEX IF NOT EXISTS idx_groups_scope
+    ON political_groups(legislature_number, chamber_code, group_id);
+CREATE INDEX IF NOT EXISTS idx_roll_calls_scope_order
+    ON roll_calls(legislature_number, chamber_code, occurred_at DESC, roll_call_id);
+CREATE INDEX IF NOT EXISTS idx_votes_roll_call_order
+    ON votes(roll_call_id, normalization_status, vote_id);
+CREATE INDEX IF NOT EXISTS idx_votes_group_scope
+    ON votes(group_id_at_vote, legislature_number, chamber_code, roll_call_id, vote_id);
+CREATE INDEX IF NOT EXISTS idx_votes_mandate_order
+    ON votes(mandate_id, roll_call_id, vote_id);
+CREATE INDEX IF NOT EXISTS idx_disclosures_mandate
+    ON disclosure_documents(mandate_id, disclosure_id);
+CREATE INDEX IF NOT EXISTS idx_lineage_fact
+    ON fact_lineage(fact_type, fact_id, source_record_id);

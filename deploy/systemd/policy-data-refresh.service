@@ -1,5 +1,5 @@
 [Unit]
-Description=Validate the active Policy Data Italia release
+Description=Build and activate the official Policy Data Italia release
 After=docker.service
 Requires=docker.service
 

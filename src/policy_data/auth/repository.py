@@ -25,6 +25,13 @@ class ApiKeyRecord:
     revoked_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class RateLimit:
+    bucket_key: str
+    limit: int
+    window: timedelta
+
+
 class AuthRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -39,23 +46,145 @@ class AuthRepository:
         idempotency_key: str,
         now: datetime,
         expires_at: datetime,
-    ) -> None:
+        rate_limits: tuple[RateLimit, ...],
+    ) -> bool:
         with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._reserve_rate_limits(rate_limits, now):
+                    self.connection.rollback()
+                    return False
+                self.connection.execute(
+                    """UPDATE otp_challenges SET state = 'expired'
+                         WHERE email_digest = ? AND state = 'pending'""",
+                    (email_digest,),
+                )
+                self.connection.execute(
+                    """INSERT INTO otp_challenges(
+                           challenge_id, email_digest, code_digest, state,
+                           provider_idempotency_key, expires_at, created_at
+                       ) VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
+                    (
+                        challenge_id,
+                        email_digest,
+                        code_digest,
+                        idempotency_key,
+                        expires_at.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+                self.connection.commit()
+                return True
+            except Exception:
+                self.connection.rollback()
+                raise
+
+    def reserve_verification(
+        self, *, rate_limits: tuple[RateLimit, ...], now: datetime
+    ) -> bool:
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._reserve_rate_limits(rate_limits, now):
+                    self.connection.rollback()
+                    return False
+                self.connection.commit()
+                return True
+            except Exception:
+                self.connection.rollback()
+                raise
+
+    def purge_expired_access_state(self, now: datetime) -> dict[str, int]:
+        """Apply the v1 privacy retention windows in one short transaction."""
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                challenges = self.connection.execute(
+                    "DELETE FROM otp_challenges WHERE created_at < ?",
+                    ((now - timedelta(hours=24)).isoformat(),),
+                ).rowcount
+                sessions = self.connection.execute(
+                    "DELETE FROM sessions WHERE expires_at < ?",
+                    ((now - timedelta(days=30)).isoformat(),),
+                ).rowcount
+                buckets = self.connection.execute(
+                    "DELETE FROM rate_limit_buckets WHERE expires_at < ?",
+                    ((now - timedelta(hours=48)).isoformat(),),
+                ).rowcount
+                self.connection.commit()
+                return {
+                    "otp_challenges": challenges,
+                    "sessions": sessions,
+                    "rate_limit_buckets": buckets,
+                }
+            except Exception:
+                self.connection.rollback()
+                raise
+
+    def delete_account(self, account_id: str) -> bool:
+        """Irreversibly remove one account and all of its credential state."""
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                exists = self.connection.execute(
+                    "SELECT 1 FROM accounts WHERE account_id = ?", (account_id,)
+                ).fetchone()
+                if exists is None:
+                    self.connection.rollback()
+                    return False
+                self.connection.execute(
+                    "DELETE FROM otp_challenges WHERE account_id = ?", (account_id,)
+                )
+                self.connection.execute(
+                    "DELETE FROM sessions WHERE account_id = ?", (account_id,)
+                )
+                self.connection.execute(
+                    "DELETE FROM api_keys WHERE account_id = ?", (account_id,)
+                )
+                self.connection.execute(
+                    "DELETE FROM accounts WHERE account_id = ?", (account_id,)
+                )
+                self.connection.commit()
+                return True
+            except Exception:
+                self.connection.rollback()
+                raise
+
+    def _reserve_rate_limits(
+        self, rate_limits: tuple[RateLimit, ...], now: datetime
+    ) -> bool:
+        reservations: list[tuple[RateLimit, datetime, int]] = []
+        for rate_limit in rate_limits:
+            row = self.connection.execute(
+                """SELECT window_started_at, count, expires_at
+                     FROM rate_limit_buckets WHERE bucket_key = ?""",
+                (rate_limit.bucket_key,),
+            ).fetchone()
+            if row is None or datetime.fromisoformat(row[2]) <= now:
+                reservations.append((rate_limit, now, 1))
+            elif row[1] >= rate_limit.limit:
+                return False
+            else:
+                reservations.append(
+                    (rate_limit, datetime.fromisoformat(row[0]), row[1] + 1)
+                )
+        for rate_limit, window_start, count in reservations:
             self.connection.execute(
-                """INSERT INTO otp_challenges(
-                       challenge_id, email_digest, code_digest, state,
-                       provider_idempotency_key, expires_at, created_at
-                   ) VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
+                """INSERT INTO rate_limit_buckets(
+                       bucket_key, window_started_at, count, expires_at
+                   ) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(bucket_key) DO UPDATE SET
+                       window_started_at = excluded.window_started_at,
+                       count = excluded.count,
+                       expires_at = excluded.expires_at""",
                 (
-                    challenge_id,
-                    email_digest,
-                    code_digest,
-                    idempotency_key,
-                    expires_at.isoformat(),
-                    now.isoformat(),
+                    rate_limit.bucket_key,
+                    window_start.isoformat(),
+                    count,
+                    (window_start + rate_limit.window).isoformat(),
                 ),
             )
-            self.connection.commit()
+        return True
 
     def consume_challenge(
         self,

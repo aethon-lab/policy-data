@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from policy_data.domain.enums import ChamberCode, VotePosition
 
@@ -33,3 +34,19 @@ class VoterPage:
     items: tuple[VoterResult, ...]
     release_id: str
     next_cursor: str | None
+    data_through: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalPage:
+    items: tuple[dict[str, Any], ...]
+    release_id: str
+    data_through: str
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalRecord:
+    item: dict[str, Any]
+    release_id: str
+    data_through: str

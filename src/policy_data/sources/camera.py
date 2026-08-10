@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from collections import Counter
 
 from rdflib import Graph, Literal, Namespace, URIRef
 from rdflib.namespace import DC, FOAF, RDF, RDFS, XSD
@@ -88,6 +89,8 @@ class CameraRollCall:
     official_type: str
     occurred_on: str
     detail_url: str | None
+    item_uri: str | None
+    totals: dict[str, int]
     is_secret: bool
     position_coverage: str
 
@@ -215,6 +218,21 @@ def _required_text(graph: Graph, subject: URIRef, predicate: URIRef, field: str)
     return str(value)
 
 
+def _optional_integer(graph: Graph, subject: URIRef, predicate: URIRef) -> int | None:
+    value = graph.value(subject, predicate)
+    if value is None:
+        return None
+    try:
+        parsed = int(str(value))
+    except ValueError as error:
+        raise CameraQuarantine(
+            f"Camera total {predicate} must be an integer"
+        ) from error
+    if parsed < 0:
+        raise CameraQuarantine(f"Camera total {predicate} cannot be negative")
+    return parsed
+
+
 class CameraAdapter:
     legislature = 19
     chamber = "camera"
@@ -272,6 +290,7 @@ class CameraAdapter:
         )
 
         rdf_positions: dict[tuple[str, str], str] = {}
+        rdf_duplicate_rolls: set[str] = set()
         for vote_subject in votes_graph.subjects(RDF.type, OCD.voto):
             roll = votes_graph.value(vote_subject, OCD.rif_votazione)
             deputy_node = votes_graph.value(vote_subject, OCD.rif_deputato)
@@ -281,7 +300,11 @@ class CameraAdapter:
                     f"position {vote_subject} misses a required relationship"
                 )
                 continue
-            rdf_positions[(str(roll), str(deputy_node))] = str(raw)
+            key = (str(roll), str(deputy_node))
+            if key in rdf_positions:
+                rdf_duplicate_rolls.add(str(roll))
+            else:
+                rdf_positions[key] = str(raw)
 
         roll_calls: list[CameraRollCall] = []
         member_votes: list[CameraMemberVote] = []
@@ -305,13 +328,58 @@ class CameraAdapter:
                 continue
             detail_value = votes_graph.value(subject, DC.relation)
             detail_url = str(detail_value) if detail_value is not None else None
+            item_value = votes_graph.value(subject, OCD.rif_attoCamera)
+            item_uri = str(item_value) if item_value is not None else None
+            total_predicates = {
+                "present": OCD.presenti,
+                "voting": OCD.votanti,
+                "yes": OCD.favorevoli,
+                "no": OCD.contrari,
+                "abstain": OCD.astenuti,
+                "majority": OCD.maggioranza,
+            }
+            try:
+                totals = {
+                    name: value
+                    for name, predicate in total_predicates.items()
+                    if (value := _optional_integer(votes_graph, subject, predicate))
+                    is not None
+                }
+            except CameraQuarantine as error:
+                quarantined.append(f"{source_id}: {error}")
+                totals = {}
             coverage = "secret" if is_secret else "unavailable"
             stable_roll_id = roll_call_id(self.legislature, self.chamber, source_id)
-            if detail_url and not is_secret:
+            rdf_rows = {
+                deputy_uri: raw
+                for (roll_uri, deputy_uri), raw in rdf_positions.items()
+                if roll_uri == str(subject)
+            }
+            if not is_secret and str(subject) in rdf_duplicate_rolls:
+                quarantined.append(f"{source_id}: duplicate RDF deputy positions")
+                coverage = "partial"
+            elif detail_url and not is_secret:
                 detail_html = artifacts.detail_html.get(detail_url)
                 if detail_html is None:
-                    quarantined.append(f"{source_id}: missing verified detail artifact")
-                    coverage = "partial"
+                    try:
+                        normalized_rdf_votes = self._normalize_rdf_votes(
+                            stable_roll_id,
+                            rdf_rows,
+                            people_by_uri,
+                            mandate_by_person,
+                        )
+                    except CameraQuarantine as error:
+                        quarantined.append(f"{source_id}: {error}")
+                        coverage = "partial"
+                    else:
+                        if normalized_rdf_votes:
+                            member_votes.extend(normalized_rdf_votes)
+                            coverage = "complete"
+                        else:
+                            quarantined.append(
+                                f"{source_id}: missing verified detail artifact"
+                            )
+                            coverage = "partial"
                 else:
                     try:
                         detail = parse_vote_detail(detail_html)
@@ -320,7 +388,12 @@ class CameraAdapter:
                         )
                         if expected_identity != source_id:
                             raise CameraQuarantine("RDF/detail vote identity disagrees")
+                        if str(subject) in rdf_duplicate_rolls:
+                            raise CameraQuarantine(
+                                "duplicate RDF deputy positions for roll call"
+                            )
                         normalized_detail_votes: list[CameraMemberVote] = []
+                        detail_people: set[str] = set()
                         for row in detail.rows:
                             candidates = names.get(row.name.casefold(), [])
                             if len(candidates) != 1:
@@ -328,6 +401,11 @@ class CameraAdapter:
                                     f"detail row {row.name!r} has {len(candidates)} deputy matches"
                                 )
                             person = candidates[0]
+                            if person.source_uri in detail_people:
+                                raise CameraQuarantine(
+                                    f"duplicate detail row for {row.name}"
+                                )
+                            detail_people.add(person.source_uri)
                             mandate = mandate_by_person.get(person.person_id)
                             if mandate is None:
                                 raise CameraQuarantine(
@@ -353,11 +431,90 @@ class CameraAdapter:
                                     row.group,
                                 )
                             )
+                        rdf_people = {
+                            deputy_uri
+                            for (roll_uri, deputy_uri) in rdf_positions
+                            if roll_uri == str(subject)
+                        }
+                        if detail_people != rdf_people:
+                            missing = sorted(rdf_people - detail_people)
+                            unexpected = sorted(detail_people - rdf_people)
+                            raise CameraQuarantine(
+                                "RDF/detail deputy identity sets disagree "
+                                f"(missing={missing!r}, unexpected={unexpected!r})"
+                            )
+                        required_totals = {"yes", "no", "abstain"}
+                        if not required_totals.issubset(detail.totals):
+                            raise CameraQuarantine(
+                                "detail is missing yes/no/abstain official totals"
+                            )
+                        normalized_counts = Counter(
+                            vote.position for vote in normalized_detail_votes
+                        )
+                        expected_counts = {
+                            VotePosition.YES: detail.totals["yes"],
+                            VotePosition.NO: detail.totals["no"],
+                            VotePosition.ABSTAIN: detail.totals["abstain"],
+                        }
+                        actual_counts = {
+                            position: normalized_counts[position]
+                            for position in expected_counts
+                        }
+                        if actual_counts != expected_counts:
+                            raise CameraQuarantine(
+                                "normalized positions disagree with official totals "
+                                f"(expected={expected_counts!r}, actual={actual_counts!r})"
+                            )
                         member_votes.extend(normalized_detail_votes)
                         coverage = "complete"
                     except CameraQuarantine as error:
                         quarantined.append(f"{source_id}: {error}")
                         coverage = "partial"
+            elif not is_secret and rdf_rows:
+                try:
+                    normalized_rdf_votes = self._normalize_rdf_votes(
+                        stable_roll_id,
+                        rdf_rows,
+                        people_by_uri,
+                        mandate_by_person,
+                    )
+                except CameraQuarantine as error:
+                    quarantined.append(f"{source_id}: {error}")
+                    coverage = "partial"
+                else:
+                    member_votes.extend(normalized_rdf_votes)
+                    coverage = "complete"
+            if coverage == "complete" and totals:
+                roll_votes = [
+                    vote for vote in member_votes if vote.roll_call_id == stable_roll_id
+                ]
+                normalized_counts = Counter(vote.position for vote in roll_votes)
+                expected_counts = {
+                    VotePosition.YES: totals.get(
+                        "yes", normalized_counts[VotePosition.YES]
+                    ),
+                    VotePosition.NO: totals.get(
+                        "no", normalized_counts[VotePosition.NO]
+                    ),
+                    VotePosition.ABSTAIN: totals.get(
+                        "abstain", normalized_counts[VotePosition.ABSTAIN]
+                    ),
+                }
+                actual_counts = {
+                    position: normalized_counts[position]
+                    for position in expected_counts
+                }
+                if actual_counts != expected_counts:
+                    member_votes = [
+                        vote
+                        for vote in member_votes
+                        if vote.roll_call_id != stable_roll_id
+                    ]
+                    quarantined.append(
+                        f"{source_id}: RDF positions disagree with official totals "
+                        f"(expected={expected_counts!r}, actual={actual_counts!r})"
+                    )
+                    coverage = "partial"
             description_value = votes_graph.value(subject, DC.description)
             roll_calls.append(
                 CameraRollCall(
@@ -369,6 +526,8 @@ class CameraAdapter:
                     normalize_vote_type(raw_type),
                     occurred,
                     detail_url,
+                    item_uri,
+                    totals,
                     is_secret,
                     coverage,
                 )
@@ -381,3 +540,33 @@ class CameraAdapter:
             tuple(member_votes),
             tuple(quarantined),
         )
+
+    @staticmethod
+    def _normalize_rdf_votes(
+        roll_call_id_value: str,
+        rdf_rows: dict[str, str],
+        people_by_uri: dict[str, CameraPerson],
+        mandate_by_person: dict[str, CameraMandate],
+    ) -> list[CameraMemberVote]:
+        normalized: list[CameraMemberVote] = []
+        for deputy_uri, raw_position in sorted(rdf_rows.items()):
+            person = people_by_uri.get(deputy_uri)
+            if person is None:
+                raise CameraQuarantine(
+                    f"RDF position references unknown deputy {deputy_uri}"
+                )
+            mandate = mandate_by_person.get(person.person_id)
+            if mandate is None:
+                raise CameraQuarantine(
+                    f"RDF position deputy {deputy_uri} has no mandate"
+                )
+            normalized.append(
+                CameraMemberVote(
+                    roll_call_id_value,
+                    mandate.mandate_id,
+                    raw_position,
+                    map_camera_position(raw_position),
+                    "",
+                )
+            )
+        return normalized
