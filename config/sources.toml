@@ -1,0 +1,64 @@
+[[sources]]
+id = "camera_votes_xix"
+publisher = "Camera dei deputati"
+dataset = "Votazioni della XIX legislatura"
+legislature = 19
+chamber = "camera"
+url = "https://dati.camera.it/ocd/dump/votazione-19.rdf.zip"
+allowed_hosts = ["dati.camera.it"]
+media_types = ["application/zip", "application/octet-stream"]
+max_bytes = 536870912
+license = "CC-BY-SA-4.0"
+adapter_version = "camera-xix-v1"
+
+[[sources]]
+id = "camera_deputies_xix"
+publisher = "Camera dei deputati"
+dataset = "Deputati della XIX legislatura"
+legislature = 19
+chamber = "camera"
+url = "https://dati.camera.it/ocd/dump/deputato-19.rdf.zip"
+allowed_hosts = ["dati.camera.it"]
+media_types = ["application/zip", "application/octet-stream"]
+max_bytes = 268435456
+license = "CC-BY-SA-4.0"
+adapter_version = "camera-xix-v1"
+
+[[sources]]
+id = "camera_mandates_xix"
+publisher = "Camera dei deputati"
+dataset = "Mandati Camera della XIX legislatura"
+legislature = 19
+chamber = "camera"
+url = "https://dati.camera.it/ocd/dump/mandatoCamera-19.rdf.zip"
+allowed_hosts = ["dati.camera.it"]
+media_types = ["application/zip", "application/octet-stream"]
+max_bytes = 268435456
+license = "CC-BY-SA-4.0"
+adapter_version = "camera-xix-v1"
+
+[[sources]]
+id = "camera_groups_xix"
+publisher = "Camera dei deputati"
+dataset = "Gruppi parlamentari della XIX legislatura"
+legislature = 19
+chamber = "camera"
+url = "https://dati.camera.it/ocd/dump/gruppoParlamentare-19.rdf.zip"
+allowed_hosts = ["dati.camera.it"]
+media_types = ["application/zip", "application/octet-stream"]
+max_bytes = 134217728
+license = "CC-BY-SA-4.0"
+adapter_version = "camera-xix-v1"
+
+[[sources]]
+id = "senato_votes_xix"
+publisher = "Senato della Repubblica"
+dataset = "Votazioni elettroniche d'Aula della XIX legislatura"
+legislature = 19
+chamber = "senato"
+url = "https://dati.senato.it/DatiSenato/browse/8?legislatura=19&testo_generico=13"
+allowed_hosts = ["dati.senato.it"]
+media_types = ["text/html", "text/csv", "application/json", "application/xml", "text/xml"]
+max_bytes = 536870912
+license = "CC-BY-3.0"
+adapter_version = "senato-xix-v1"
