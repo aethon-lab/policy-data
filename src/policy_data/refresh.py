@@ -26,12 +26,14 @@ def validate_active(root: Path) -> None:
     print(f"validated active release {release_id}")
 
 
-def build_release(root: Path, registry_path: Path, artifact_root: Path) -> None:
+def build_release(
+    root: Path, registry_path: Path, artifact_root: Path, *, offline: bool = False
+) -> None:
     result = OfficialRefresh(
         SourceRegistry.load(registry_path),
         SafeFetcher(ArtifactStore(artifact_root)),
         ReleaseBuilder(root),
-    ).run()
+    ).run(use_cached=offline)
     action = "created and activated" if result.created else "reactivated"
     print(f"{action} official release {result.release_id}")
 
@@ -40,13 +42,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Policy Data release maintenance")
     parser.add_argument("command", choices=("build", "validate"))
     parser.add_argument("--registry", type=Path, default=Path("config/sources.toml"))
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="build only from hash-verified cached artifacts matching the registry",
+    )
     args = parser.parse_args()
     data_root = Path(os.getenv("POLICY_DATA_DATA_DIR", "data"))
     published_root = data_root / "published"
     if args.command == "validate":
         validate_active(published_root)
     else:
-        build_release(published_root, args.registry, data_root / "raw")
+        build_release(
+            published_root,
+            args.registry,
+            data_root / "raw",
+            offline=args.offline,
+        )
 
 
 if __name__ == "__main__":

@@ -94,7 +94,7 @@ class OfficialRefresh:
         if self.now.tzinfo is None:
             raise ValueError("refresh time must be timezone-aware")
 
-    def run(self) -> ReleaseBuildResult:
+    def run(self, *, use_cached: bool = False) -> ReleaseBuildResult:
         configured_roles = {
             source.role for source in self.registry.all() if source.role is not None
         }
@@ -104,7 +104,8 @@ class OfficialRefresh:
                 "official source configuration is incomplete; missing roles: "
                 + ", ".join(missing)
             )
-        acquired = tuple(self._acquire(source) for source in self.registry.all())
+        acquire = self._acquire_cached if use_cached else self._acquire
+        acquired = tuple(acquire(source) for source in self.registry.all())
         release = self.assemble(acquired)
         return self.builder.build(release)
 
@@ -114,7 +115,32 @@ class OfficialRefresh:
                 f"source {source.source_id} has no orchestration role"
             )
         artifact = self.fetcher.fetch(source)
+        return self._materialize(source, artifact)
+
+    def _acquire_cached(self, source: SourceDefinition) -> AcquiredSource:
+        artifact = self.fetcher.store.latest(source.source_id)
+        if artifact is None:
+            raise SourceAssemblyError(
+                f"source {source.source_id} has no verified cached artifact"
+            )
+        return self._materialize(source, artifact, require_current_definition=True)
+
+    def _materialize(
+        self,
+        source: SourceDefinition,
+        artifact: StoredArtifact,
+        *,
+        require_current_definition: bool = False,
+    ) -> AcquiredSource:
         metadata = json.loads(artifact.metadata_path.read_text(encoding="utf-8"))
+        if require_current_definition and (
+            metadata.get("source_id") != source.source_id
+            or metadata.get("source_url") != source.request_url
+            or metadata.get("adapter_version") != source.adapter_version
+        ):
+            raise SourceAssemblyError(
+                f"source {source.source_id} cached artifact does not match the registry"
+            )
         body = self._bounded_body(source, artifact.path)
         observed_at = datetime.fromisoformat(metadata["observed_at"])
         return AcquiredSource(

@@ -184,6 +184,22 @@ def test_offline_cross_chamber_refresh_acquires_builds_and_activates(
     )
     assert len(list((tmp_path / "artifacts" / "sha256").glob("*/*/body"))) == 10
 
+    cached_refresh = OfficialRefresh(
+        SourceRegistry(sources),
+        SafeFetcher(
+            ArtifactStore(tmp_path / "artifacts"),
+            transport=httpx.MockTransport(
+                lambda request: pytest.fail(f"unexpected request: {request.url}")
+            ),
+            resolver=lambda host: ["93.184.216.34"],
+        ),
+        ReleaseBuilder(release_root),
+        now=datetime(2026, 8, 10, tzinfo=UTC),
+    )
+    cached_result = cached_refresh.run(use_cached=True)
+    assert cached_result.created is False
+    assert cached_result.release_id == result.release_id
+
 
 def test_refresh_preflight_fails_closed_with_missing_official_roles(
     tmp_path: Path,
