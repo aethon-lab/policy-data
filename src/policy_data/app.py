@@ -1,4 +1,6 @@
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Protocol
 
@@ -11,6 +13,7 @@ from policy_data.api.errors import problem
 from policy_data.api.schemas import HealthResponse, VoterPageResponse, VoterResponse
 from policy_data.domain.enums import ChamberCode, VotePosition
 from policy_data.ingest.publish import read_active_release
+from policy_data.mcp.server import authenticated_mcp_app, create_mcp_server
 from policy_data.query.filters import VoteQuery
 from policy_data.query.results import VoterPage
 
@@ -30,13 +33,26 @@ def create_app(
     auth_service: AuthServiceContract,
     *,
     release_root: Path,
+    enable_mcp: bool = True,
 ) -> FastAPI:
+    mcp_server = create_mcp_server(query_service) if enable_mcp else None
+    mcp_app = authenticated_mcp_app(mcp_server, auth_service) if mcp_server else None
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if mcp_server is None:
+            yield
+            return
+        async with mcp_server.session_manager.run():
+            yield
+
     app = FastAPI(
         title="Policy Data Italia API",
         version="0.1.0",
         openapi_version="3.1.0",
         docs_url=None,
         redoc_url=None,
+        lifespan=lifespan,
     )
     bearer = HTTPBearer(auto_error=False, scheme_name="ApiKeyBearer")
 
@@ -181,6 +197,8 @@ def create_app(
             },
         )
 
+    if mcp_app is not None:
+        app.mount("/", mcp_app, name="mcp")
     return app
 
 
