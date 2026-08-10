@@ -314,8 +314,41 @@ class SenatoAdapter:
         member_votes: list[SenatoMemberVote] = []
         for vote_uri, rows_by_senator in sorted(rows_by_vote.items()):
             rows = list(rows_by_senator.values())
-            representative = rows[-1]
             try:
+                metadata_rows = [row for row in rows if "title" in row]
+                if not metadata_rows:
+                    raise SenatoQuarantine(
+                        "vote is missing its metadata row across source windows"
+                    )
+                representative = metadata_rows[0]
+                metadata_keys = (
+                    "sitting",
+                    "sitting_number",
+                    "date",
+                    "number",
+                    "title",
+                    "vote_type",
+                    "result",
+                    "present",
+                    "voting",
+                    "yes",
+                    "no",
+                    "abstain",
+                    "legal_number",
+                    "majority",
+                    "object",
+                )
+                expected_metadata = tuple(
+                    _optional_value(representative, key) for key in metadata_keys
+                )
+                if any(
+                    tuple(_optional_value(row, key) for key in metadata_keys)
+                    != expected_metadata
+                    for row in metadata_rows[1:]
+                ):
+                    raise SenatoQuarantine(
+                        "vote has conflicting metadata across source windows"
+                    )
                 source_vote_id = vote_uri.rsplit("/", 1)[-1]
                 stable_roll_id = roll_call_id(
                     self.legislature, self.chamber, source_vote_id

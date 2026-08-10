@@ -4,7 +4,6 @@ import json
 import hashlib
 from dataclasses import replace
 from pathlib import Path
-from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -54,9 +53,7 @@ def test_valid_body_is_content_addressed_and_reused(tmp_path: Path) -> None:
     assert metadata["source_url"] == _source().url
 
 
-def test_sparql_query_uses_bounded_post_body_instead_of_query_string(
-    tmp_path: Path,
-) -> None:
+def test_sparql_query_uses_allowlisted_get_request(tmp_path: Path) -> None:
     source = replace(
         _source(),
         source_id="senato-query",
@@ -69,13 +66,9 @@ def test_sparql_query_uses_bounded_post_body_instead_of_query_string(
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"
-        assert request.url.query == b""
-        form = parse_qs(request.content.decode())
-        assert form == {
-            "query": [source.query],
-            "output": ["application/sparql-results+json"],
-        }
+        assert request.method == "GET"
+        assert request.url.params["query"] == source.query
+        assert request.url.params["output"] == "application/sparql-results+json"
         return httpx.Response(
             200,
             headers={"content-type": "application/sparql-results+json"},

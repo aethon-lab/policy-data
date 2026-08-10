@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,9 +72,21 @@ def test_offline_cross_chamber_refresh_acquires_builds_and_activates(
         ),
         _source("camera-detail-599044", "camera_vote_detail", detail_url, "text/html"),
         _source(
-            "senato-votes",
+            "senato-vote-metadata",
             "senato_vote_window",
-            "https://dati.senato.it/votes.json",
+            "https://dati.senato.it/vote-metadata.json",
+            "application/json",
+        ),
+        _source(
+            "senato-vote-yes",
+            "senato_vote_window",
+            "https://dati.senato.it/vote-yes.json",
+            "application/json",
+        ),
+        _source(
+            "senato-vote-no",
+            "senato_vote_window",
+            "https://dati.senato.it/vote-no.json",
             "application/json",
         ),
         _source(
@@ -93,15 +106,34 @@ def test_offline_cross_chamber_refresh_acquires_builds_and_activates(
         b'  <rdf:Description rdf:about="http://dati.camera.it/ocd/votazione.rdf/vs19_100_001">',
         1,
     )[0] + b"</rdf:RDF>"
+    senato_payload = json.loads((SENATO / "votes.json").read_bytes())
+    senato_rows = senato_payload["results"]["bindings"]
+
+    def senato_body(rows: list[dict[str, object]]) -> bytes:
+        return json.dumps(
+            {"head": senato_payload["head"], "results": {"bindings": rows}}
+        ).encode()
+
+    metadata_row = {
+        key: value
+        for key, value in senato_rows[0].items()
+        if key not in {"senator", "position_predicate"}
+    }
+    position_rows = [
+        {key: row[key] for key in ("vote", "date", "position_predicate", "senator")}
+        for row in senato_rows
+    ]
     bodies = {
         sources[0].url: camera_votes,
         sources[1].url: (CAMERA / "deputies.rdf").read_bytes(),
         sources[2].url: (CAMERA / "mandates.rdf").read_bytes(),
         sources[3].url: (CAMERA / "groups.rdf").read_bytes(),
         sources[4].url: (CAMERA / "vote_detail.html").read_bytes(),
-        sources[5].url: (SENATO / "votes.json").read_bytes(),
-        sources[6].url: (SENATO / "people.json").read_bytes(),
-        sources[7].url: (SENATO / "groups.json").read_bytes(),
+        sources[5].url: senato_body([metadata_row]),
+        sources[6].url: senato_body([position_rows[0]]),
+        sources[7].url: senato_body([position_rows[1]]),
+        sources[8].url: (SENATO / "people.json").read_bytes(),
+        sources[9].url: (SENATO / "groups.json").read_bytes(),
     }
     media_types = {source.url: next(iter(source.media_types)) for source in sources}
 
@@ -141,7 +173,16 @@ def test_offline_cross_chamber_refresh_acquires_builds_and_activates(
         == "http://dati.camera.it/ocd/attocamera.rdf/ac19_1311"
     )
     assert database.execute("SELECT COUNT(*) FROM roll_call_items").fetchone()[0] == 2
-    assert len(list((tmp_path / "artifacts" / "sha256").glob("*/*/body"))) == 8
+    assert (
+        database.execute(
+            "SELECT COUNT(DISTINCT sr.artifact_id) "
+            "FROM fact_lineage fl JOIN source_records sr USING (source_record_id) "
+            "JOIN votes v ON v.vote_id = fl.fact_id "
+            "WHERE fl.fact_type = 'vote' AND v.chamber_code = 'senato'"
+        ).fetchone()[0]
+        == 2
+    )
+    assert len(list((tmp_path / "artifacts" / "sha256").glob("*/*/body"))) == 10
 
 
 def test_refresh_preflight_fails_closed_with_missing_official_roles(

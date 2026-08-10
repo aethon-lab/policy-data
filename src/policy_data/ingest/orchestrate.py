@@ -227,13 +227,32 @@ class OfficialRefresh:
         lineage: list[dict[str, Any]] = []
 
         role_source = {role: values[0] for role, values in by_role.items()}
-        senato_vote_sources: dict[str, AcquiredSource] = {}
+        senato_metadata_sources: dict[str, AcquiredSource] = {}
+        senato_member_sources: dict[tuple[str, str], AcquiredSource] = {}
         for source in by_role["senato_vote_window"]:
             payload = json.loads(source.body)
             for binding in payload.get("results", {}).get("bindings", []):
                 vote = binding.get("vote", {}).get("value")
                 if isinstance(vote, str):
-                    senato_vote_sources[vote.rsplit("/", 1)[-1]] = source
+                    source_vote_id = vote.rsplit("/", 1)[-1]
+                    senator = binding.get("senator", {}).get("value")
+                    if isinstance(senator, str):
+                        senato_member_sources[(source_vote_id, senator)] = source
+                    else:
+                        senato_metadata_sources[source_vote_id] = source
+                        for cell in binding.values():
+                            value = (
+                                cell.get("value") if isinstance(cell, dict) else None
+                            )
+                            if isinstance(value, str):
+                                senato_metadata_sources.setdefault(value, source)
+        senato_person_source = {
+            person.person_id: person.source_uri for person in senato.people
+        }
+        senato_mandate_source = {
+            mandate.mandate_id: senato_person_source[mandate.person_id]
+            for mandate in senato.mandates
+        }
 
         def fact(
             fact_type: str,
@@ -245,8 +264,15 @@ class OfficialRefresh:
         ) -> None:
             source = role_source[role]
             if role == "senato_vote_window":
-                source_vote_id = upstream_key.split(":", 1)[0]
-                source = senato_vote_sources.get(source_vote_id, source)
+                if fact_type == "vote" and ":mandate:" in upstream_key:
+                    source_vote_id, mandate_suffix = upstream_key.split(":mandate:", 1)
+                    senator_uri = senato_mandate_source.get(f"mandate:{mandate_suffix}")
+                    if senator_uri is not None:
+                        source = senato_member_sources.get(
+                            (source_vote_id, senator_uri), source
+                        )
+                else:
+                    source = senato_metadata_sources.get(upstream_key, source)
             record_id = _id("source_record", fact_type, fact_id)
             source_records.append(
                 {

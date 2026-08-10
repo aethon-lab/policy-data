@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,36 +65,58 @@ class SourceRegistry:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
         sources = []
         for item in raw.get("sources", []):
-            windows = item.get("date_windows") or (None,)
-            for window in windows:
+            variants = item.get("query_variants") or (None,)
+            for variant in variants:
                 query = item.get("query")
                 source_id = item["id"]
-                if window is not None:
-                    if not isinstance(window, list) or len(window) != 2 or not query:
-                        raise ValueError(f"source {source_id}: invalid date window")
-                    start, end = window
-                    query = query.replace("__START__", start).replace("__END__", end)
-                    source_id = f"{source_id}-{start}-{end}"
-                sources.append(
-                    SourceDefinition(
-                        source_id=source_id,
-                        publisher=item["publisher"],
-                        dataset=item["dataset"],
-                        legislature=item["legislature"],
-                        chamber=item["chamber"],
-                        url=item["url"],
-                        allowed_hosts=frozenset(
-                            host.lower() for host in item["allowed_hosts"]
-                        ),
-                        media_types=frozenset(item["media_types"]),
-                        max_bytes=item["max_bytes"],
-                        license_id=item["license"],
-                        adapter_version=item["adapter_version"],
-                        role=item.get("role"),
-                        archive_member=item.get("archive_member"),
-                        query=query,
+                if variant is not None:
+                    if (
+                        not isinstance(variant, str)
+                        or re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", variant) is None
+                        or not query
+                        or "__VARIANT__" not in query
+                    ):
+                        raise ValueError(f"source {source_id}: invalid query variant")
+                    query = query.replace("__VARIANT__", variant)
+                    source_id = f"{source_id}-{variant}"
+                windows = item.get("date_windows") or (None,)
+                for window in windows:
+                    window_query = query
+                    window_source_id = source_id
+                    if window is not None:
+                        if (
+                            not isinstance(window, list)
+                            or len(window) != 2
+                            or not window_query
+                        ):
+                            raise ValueError(
+                                f"source {window_source_id}: invalid date window"
+                            )
+                        start, end = window
+                        window_query = window_query.replace("__START__", start).replace(
+                            "__END__", end
+                        )
+                        window_source_id = f"{window_source_id}-{start}-{end}"
+                    sources.append(
+                        SourceDefinition(
+                            source_id=window_source_id,
+                            publisher=item["publisher"],
+                            dataset=item["dataset"],
+                            legislature=item["legislature"],
+                            chamber=item["chamber"],
+                            url=item["url"],
+                            allowed_hosts=frozenset(
+                                host.lower() for host in item["allowed_hosts"]
+                            ),
+                            media_types=frozenset(item["media_types"]),
+                            max_bytes=item["max_bytes"],
+                            license_id=item["license"],
+                            adapter_version=item["adapter_version"],
+                            role=item.get("role"),
+                            archive_member=item.get("archive_member"),
+                            query=window_query,
+                        )
                     )
-                )
         if not sources:
             raise ValueError("source registry is empty")
         return cls(sources)

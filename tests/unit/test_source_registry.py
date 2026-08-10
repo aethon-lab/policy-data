@@ -64,3 +64,33 @@ date_windows=[['2022-01-01','2022-12-31'],['2023-01-01','2023-12-31']]
     assert len(sources) == 2
     assert sources[0].source_id.endswith("2022-01-01-2022-12-31")
     assert "2022-01-01" in sources[0].request_url
+
+
+def test_registry_expands_query_variants_before_windows(tmp_path: Path) -> None:
+    path = tmp_path / "sources.toml"
+    path.write_text(
+        """[[sources]]
+id='votes'
+publisher='x'
+dataset='x'
+legislature=19
+chamber='senato'
+url='https://dati.senato.it/sparql'
+allowed_hosts=['dati.senato.it']
+media_types=['application/sparql-results+json']
+max_bytes=100
+license='CC-BY-3.0'
+adapter_version='1'
+query='SELECT (__VARIANT__ AS ?position) WHERE {} FILTER("__START__" < "__END__")'
+query_variants=['yes','no']
+date_windows=[['2022-01-01','2022-01-31']]
+""",
+        encoding="utf-8",
+    )
+    sources = SourceRegistry.load(path).all()
+    assert [source.source_id for source in sources] == [
+        "votes-yes-2022-01-01-2022-01-31",
+        "votes-no-2022-01-01-2022-01-31",
+    ]
+    assert sources[0].query is not None
+    assert "__VARIANT__" not in sources[0].query

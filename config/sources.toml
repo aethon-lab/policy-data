@@ -72,8 +72,7 @@ PREFIX osr: <http://dati.senato.it/osr/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 SELECT ?vote ?sitting ?sitting_number ?date ?number ?title ?vote_type ?result
-       ?present ?voting ?yes ?no ?abstain ?legal_number ?majority
-       ?position_predicate ?senator ?object
+       ?present ?voting ?yes ?no ?abstain ?legal_number ?majority ?object
 WHERE {
   ?vote a osr:Votazione ; osr:legislatura 19 ; osr:seduta ?sitting ;
         osr:numero ?number ; rdfs:label ?title ; osr:tipoVotazione ?vote_type ;
@@ -82,31 +81,54 @@ WHERE {
         osr:numeroLegale ?legal_number ; osr:maggioranza ?majority .
   ?sitting osr:numeroSeduta ?sitting_number ; osr:dataSeduta ?date .
   OPTIONAL { ?vote osr:oggetto ?object }
-  OPTIONAL {
-    { ?vote osr:favorevole ?senator .
-      BIND(osr:favorevole AS ?position_predicate) }
-    UNION
-    { ?vote osr:contrario ?senator .
-      BIND(osr:contrario AS ?position_predicate) }
-    UNION
-    { ?vote osr:astenuto ?senator .
-      BIND(osr:astenuto AS ?position_predicate) }
-    UNION
-    { ?vote osr:inCongedoMissione ?senator .
-      BIND(osr:inCongedoMissione AS ?position_predicate) }
-    UNION
-    { ?vote osr:presenteNonVotante ?senator .
-      BIND(osr:presenteNonVotante AS ?position_predicate) }
-    UNION
-    { ?vote osr:richiedenteNonVotante ?senator .
-      BIND(osr:richiedenteNonVotante AS ?position_predicate) }
-    UNION
-    { ?vote osr:presidente ?senator .
-      BIND(osr:presidente AS ?position_predicate) }
-  }
   FILTER(?date >= "__START__"^^xsd:date && ?date <= "__END__"^^xsd:date)
 }
-ORDER BY ?date ?sitting_number ?number ?position_predicate ?senator
+ORDER BY ?date ?sitting_number ?number
+'''
+date_windows = [
+  ["2022-10-13", "2022-12-31"],
+  ["2023-01-01", "2023-03-31"],
+  ["2023-04-01", "2023-06-30"],
+  ["2023-07-01", "2023-09-30"],
+  ["2023-10-01", "2023-12-31"],
+  ["2024-01-01", "2024-03-31"],
+  ["2024-04-01", "2024-06-30"],
+  ["2024-07-01", "2024-09-30"],
+  ["2024-10-01", "2024-12-31"],
+  ["2025-01-01", "2025-03-31"],
+  ["2025-04-01", "2025-06-30"],
+  ["2025-07-01", "2025-09-30"],
+  ["2025-10-01", "2025-12-31"],
+  ["2026-01-01", "2026-03-31"],
+  ["2026-04-01", "2026-06-30"],
+  ["2026-07-01", "2026-12-31"],
+]
+
+[[sources]]
+id = "senato_vote_positions_xix"
+publisher = "Senato della Repubblica"
+dataset = "Posizioni individuali nelle votazioni elettroniche della XIX legislatura"
+legislature = 19
+chamber = "senato"
+url = "https://dati.senato.it/sparql"
+allowed_hosts = ["dati.senato.it"]
+media_types = ["application/sparql-results+json", "application/json"]
+max_bytes = 67108864
+license = "CC-BY-3.0"
+adapter_version = "senato-xix-v1"
+role = "senato_vote_window"
+query_variants = ["favorevole", "contrario", "astenuto"]
+query = '''
+PREFIX osr: <http://dati.senato.it/osr/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?vote ?date (osr:__VARIANT__ AS ?position_predicate) ?senator
+WHERE {
+  ?vote a osr:Votazione ; osr:legislatura 19 ; osr:seduta ?sitting ;
+        osr:__VARIANT__ ?senator .
+  ?sitting osr:dataSeduta ?date .
+  FILTER(?date >= "__START__"^^xsd:date && ?date <= "__END__"^^xsd:date)
+}
+ORDER BY ?date ?vote ?senator
 '''
 date_windows = [
   ["2022-10-13", "2022-12-31"],
