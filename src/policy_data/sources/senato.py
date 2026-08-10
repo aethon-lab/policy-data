@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any
 
@@ -84,6 +84,7 @@ class SenatoRollCall:
     result: str
     totals: dict[str, int]
     object_uri: str | None
+    position_coverage: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +379,12 @@ class SenatoAdapter:
                         )
                     },
                     _optional_value(representative, "object"),
+                    (
+                        "secret"
+                        if "segreta"
+                        in _required_value(representative, "vote_type").casefold()
+                        else "complete"
+                    ),
                 )
                 normalized_member_votes: list[SenatoMemberVote] = []
                 group_diagnostics: list[str] = []
@@ -430,10 +437,15 @@ class SenatoAdapter:
                         VotePosition.ABSTAIN: normalized_roll_call.totals["abstain"],
                     }
                     if normalized_counts != expected_counts:
-                        raise SenatoQuarantine(
-                            "normalized positions disagree with official totals "
+                        quarantined.append(
+                            f"vote {vote_uri}: normalized positions disagree with "
+                            "official totals "
                             f"(expected={expected_counts!r}, actual={normalized_counts!r})"
                         )
+                        normalized_roll_call = replace(
+                            normalized_roll_call, position_coverage="partial"
+                        )
+                        normalized_member_votes = []
                 roll_calls.append(normalized_roll_call)
                 member_votes.extend(normalized_member_votes)
                 quarantined.extend(group_diagnostics)

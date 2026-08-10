@@ -224,6 +224,7 @@ class OfficialRefresh:
             for message in (*camera.quarantined, *senato.quarantined)
             if "group membership" not in message
             and not message.endswith("missing verified detail artifact")
+            and "normalized positions disagree with official totals" not in message
         ]
         if hard_quarantine:
             raise SourceAssemblyError(
@@ -663,11 +664,7 @@ class OfficialRefresh:
                 senato_roll.source_uri,
                 senato_roll.object_uri or senato_roll.source_uri,
                 senato_roll.totals,
-                (
-                    "secret"
-                    if "segreta" in senato_roll.vote_type.casefold()
-                    else "complete"
-                ),
+                senato_roll.position_coverage,
                 item_source,
                 "senato_vote_window",
                 index,
