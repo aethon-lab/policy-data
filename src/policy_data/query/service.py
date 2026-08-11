@@ -42,10 +42,6 @@ _PROFILE_POSITION_FIELDS = tuple(
 )
 
 
-def _placeholders(values: tuple[object, ...]) -> str:
-    return ", ".join("?" for _ in values)
-
-
 class QueryService:
     def __init__(
         self,
