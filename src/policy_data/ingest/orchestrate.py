@@ -95,7 +95,11 @@ class OfficialRefresh:
         if self.now.tzinfo is None:
             raise ValueError("refresh time must be timezone-aware")
 
-    def run(self, *, use_cached: bool = False) -> ReleaseBuildResult:
+    def run(
+        self, *, use_cached: bool = False, reuse_cached_base: bool = False
+    ) -> ReleaseBuildResult:
+        if use_cached and reuse_cached_base:
+            raise ValueError("offline and cached-base modes are mutually exclusive")
         configured_roles = {
             source.role for source in self.registry.all() if source.role is not None
         }
@@ -105,8 +109,11 @@ class OfficialRefresh:
                 "official source configuration is incomplete; missing roles: "
                 + ", ".join(missing)
             )
-        acquire = self._acquire_cached if use_cached else self._acquire
-        acquired_list = [acquire(source) for source in self.registry.all()]
+        acquire_base = (
+            self._acquire_cached if use_cached or reuse_cached_base else self._acquire
+        )
+        acquire_detail = self._acquire_cached if use_cached else self._acquire
+        acquired_list = [acquire_base(source) for source in self.registry.all()]
         detail_sources = self._discover_camera_detail_sources(tuple(acquired_list))
         configured_urls = {item.definition.url for item in acquired_list}
         pending_details = [
@@ -114,7 +121,7 @@ class OfficialRefresh:
         ]
         if pending_details:
             with ThreadPoolExecutor(max_workers=4) as executor:
-                acquired_list.extend(executor.map(acquire, pending_details))
+                acquired_list.extend(executor.map(acquire_detail, pending_details))
         acquired = tuple(acquired_list)
         release = self.assemble(acquired)
         return self.builder.build(release)
