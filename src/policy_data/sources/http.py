@@ -154,7 +154,10 @@ class SafeFetcher:
 
     @staticmethod
     def _camera_challenge_url(url: str, body: bytes) -> str | None:
-        text = body.decode("utf-8", errors="strict")
+        # The proof form and script are ASCII. Historical Camera detail pages
+        # can be Latin-1, so challenge detection must not decode the source
+        # document as UTF-8 or alter the bytes persisted for provenance.
+        text = body.decode("ascii", errors="ignore")
         if "js-challenge-form" not in text:
             return None
         action_match = re.search(

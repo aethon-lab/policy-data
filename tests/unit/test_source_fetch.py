@@ -186,6 +186,24 @@ def test_exact_camera_proof_challenge_is_solved_for_html_detail_source(
     assert calls == 2
 
 
+def test_latin1_camera_detail_is_preserved_without_challenge_decode_failure(
+    tmp_path: Path,
+) -> None:
+    source = replace(_source(), media_types=frozenset({"text/html"}))
+    body = "<html><h1>Votazione nominale</h1><p>città</p></html>".encode("latin-1")
+    artifact = SafeFetcher(
+        ArtifactStore(tmp_path),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"content-type": "text/html"}, content=body
+            )
+        ),
+        resolver=lambda host: ["93.184.216.34"],
+    ).fetch(source)
+
+    assert artifact.path.read_bytes() == body
+
+
 @pytest.mark.parametrize(
     "address", ["127.0.0.1", "10.0.0.2", "169.254.169.254", "::1", "fe80::1"]
 )
