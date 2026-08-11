@@ -446,7 +446,7 @@ class CameraAdapter:
                             for (roll_uri, deputy_uri) in rdf_positions
                             if roll_uri == str(subject)
                         }
-                        if detail_people != rdf_people:
+                        if rdf_people and detail_people != rdf_people:
                             missing = sorted(rdf_people - detail_people)
                             unexpected = sorted(detail_people - rdf_people)
                             raise CameraQuarantine(
