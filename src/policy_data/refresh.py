@@ -27,13 +27,18 @@ def validate_active(root: Path) -> None:
 
 
 def build_release(
-    root: Path, registry_path: Path, artifact_root: Path, *, offline: bool = False
+    root: Path,
+    registry_path: Path,
+    artifact_root: Path,
+    *,
+    offline: bool = False,
+    cached_base: bool = False,
 ) -> None:
     result = OfficialRefresh(
         SourceRegistry.load(registry_path),
         SafeFetcher(ArtifactStore(artifact_root)),
         ReleaseBuilder(root),
-    ).run(use_cached=offline)
+    ).run(use_cached=offline, reuse_cached_base=cached_base)
     action = "created and activated" if result.created else "reactivated"
     print(f"{action} official release {result.release_id}")
 
@@ -47,6 +52,14 @@ def main() -> None:
         action="store_true",
         help="build only from hash-verified cached artifacts matching the registry",
     )
+    parser.add_argument(
+        "--cached-base",
+        action="store_true",
+        help=(
+            "reuse verified configured artifacts while fetching newly discovered "
+            "Camera detail pages"
+        ),
+    )
     args = parser.parse_args()
     data_root = Path(os.getenv("POLICY_DATA_DATA_DIR", "data"))
     published_root = data_root / "published"
@@ -58,6 +71,7 @@ def main() -> None:
             args.registry,
             data_root / "raw",
             offline=args.offline,
+            cached_base=args.cached_base,
         )
 
 
