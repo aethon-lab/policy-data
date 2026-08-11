@@ -35,6 +35,9 @@ def _release(root: Path, release_id: str, title: str) -> None:
         "INSERT INTO political_groups VALUES ('group:1', 19, 'camera', 'Gruppo Alfa', 'GA')"
     )
     connection.execute(
+        "INSERT INTO memberships VALUES ('membership:1', 'mandate:1', 'group:1', 19, 'camera', '2022-10-13', NULL)"
+    )
+    connection.execute(
         "INSERT INTO sittings VALUES ('sitting:1', 19, 'camera', '599', '2026-01-22')"
     )
     connection.execute(
@@ -183,9 +186,169 @@ def test_canonical_resources_share_release_metadata(tmp_path: Path) -> None:
     assert pages[1].items[0]["person_id"] == "person:1"
     assert pages[4].items[0]["position"] == "yes"
 
-    assert service.get_person("person:1").item["disclosures"] == []  # type: ignore[union-attr]
+    person = service.get_person("person:1")
+    assert person is not None
+    assert person.item["disclosures"] == []
+    assert person.item["identities"] == [
+        {
+            "authority_id": "camera",
+            "authority_name": "Camera",
+            "chamber": "camera",
+            "source_person_id": "1",
+            "source_display_name": "Ada Rossi",
+            "same_as_uri": None,
+        }
+    ]
+    assert person.item["mandates"] == [
+        {
+            "mandate_id": "mandate:1",
+            "legislature": 19,
+            "chamber": "camera",
+            "starts_on": "2022-10-13",
+            "ends_on": None,
+        }
+    ]
+    assert person.item["memberships"] == [
+        {
+            "membership_id": "membership:1",
+            "mandate_id": "mandate:1",
+            "group_id": "group:1",
+            "group_name": "Gruppo Alfa",
+            "group_abbreviation": "GA",
+            "legislature": 19,
+            "chamber": "camera",
+            "starts_on": "2022-10-13",
+            "ends_on": None,
+        }
+    ]
+    assert person.item["vote_summary"] == {
+        "recorded": 1,
+        "normalized": 1,
+        "yes": 1,
+        "no": 0,
+        "abstain": 0,
+        "present_not_voting": 0,
+        "did_not_vote": 0,
+        "not_participating": 0,
+        "mission": 0,
+        "leave": 0,
+        "leave_or_mission": 0,
+        "requester_not_voting": 0,
+        "presiding": 0,
+        "not_in_office": 0,
+        "secret_participation": 0,
+        "absent_explicit": 0,
+        "not_recorded": 0,
+        "unknown": 0,
+        "unmapped": 0,
+    }
+    assert person.item["coverage"] == [
+        {
+            "mandate_id": "mandate:1",
+            "legislature": 19,
+            "chamber": "camera",
+            "published_roll_calls": 1,
+            "complete_roll_calls": 1,
+            "partial_roll_calls": 0,
+            "unavailable_roll_calls": 0,
+            "secret_roll_calls": 0,
+            "roll_calls_with_positions": 1,
+            "recorded_person_votes": 1,
+            "expected_person_votes": 1,
+            "coverage_status": "complete",
+        }
+    ]
     assert service.get_roll_call("roll:1").item["official_result"] == "approved"  # type: ignore[union-attr]
     assert service.dataset_status().item["counts"]["votes"] == 1
+
+
+def test_person_profile_distinguishes_missing_vote_data_from_no_votes(
+    tmp_path: Path,
+) -> None:
+    _release(tmp_path, "release-a", "Conversione Superbonus")
+    database = tmp_path / "releases" / "release-a" / "canonical.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.execute("DELETE FROM votes")
+    connection.commit()
+    connection.close()
+    _activate(tmp_path, "release-a")
+
+    person = QueryService(tmp_path, cursor_secret=b"x" * 32).get_person("person:1")
+
+    assert person is not None
+    assert person.item["vote_summary"]["recorded"] == 0
+    assert person.item["vote_summary"]["absent_explicit"] == 0
+    assert person.item["coverage"][0]["published_roll_calls"] == 1
+    assert person.item["coverage"][0]["recorded_person_votes"] == 0
+    assert person.item["coverage"][0]["coverage_status"] == "partial"
+
+
+@pytest.mark.parametrize("position", tuple(VotePosition))
+def test_person_profile_preserves_each_normalized_position(
+    tmp_path: Path, position: VotePosition
+) -> None:
+    _release(tmp_path, "release-a", "Votazione")
+    database = tmp_path / "releases" / "release-a" / "canonical.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "UPDATE votes SET raw_position = ?, normalized_position = ?",
+        (position.value, position.value),
+    )
+    connection.commit()
+    connection.close()
+    _activate(tmp_path, "release-a")
+
+    person = QueryService(tmp_path, cursor_secret=b"x" * 32).get_person("person:1")
+
+    assert person is not None
+    assert person.item["vote_summary"][position.value] == 1
+    assert person.item["vote_summary"]["recorded"] == 1
+
+
+@pytest.mark.parametrize(
+    ("source_coverage", "expected_status", "expected_person_votes"),
+    (
+        ("complete", "complete", 1),
+        ("partial", "partial", 0),
+        ("unavailable", "unavailable", 0),
+        ("secret", "secret", 0),
+    ),
+)
+def test_person_profile_keeps_source_coverage_states_distinct(
+    tmp_path: Path,
+    source_coverage: str,
+    expected_status: str,
+    expected_person_votes: int,
+) -> None:
+    _release(tmp_path, "release-a", "Votazione")
+    database = tmp_path / "releases" / "release-a" / "canonical.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "UPDATE roll_calls SET position_coverage = ?, positions_available = ?",
+        (source_coverage, int(source_coverage in {"complete", "partial"})),
+    )
+    connection.commit()
+    connection.close()
+    _activate(tmp_path, "release-a")
+
+    person = QueryService(tmp_path, cursor_secret=b"x" * 32).get_person("person:1")
+
+    assert person is not None
+    coverage = person.item["coverage"][0]
+    assert coverage["coverage_status"] == expected_status
+    assert coverage["expected_person_votes"] == expected_person_votes
+
+
+def test_person_votes_can_be_pinned_to_profile_release(tmp_path: Path) -> None:
+    _release(tmp_path, "release-a", "Original")
+    _release(tmp_path, "release-b", "Replacement")
+    _activate(tmp_path, "release-b")
+    service = QueryService(tmp_path, cursor_secret=b"x" * 32)
+
+    page = service.list_person_votes("person:1", release_id="release-a")
+
+    assert page.release_id == "release-a"
+    assert page.items[0].measure_title == "Original"
 
 
 def test_structural_queries_use_canonical_indexes(tmp_path: Path) -> None:

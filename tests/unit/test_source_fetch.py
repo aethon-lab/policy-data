@@ -144,6 +144,48 @@ def test_exact_camera_proof_challenge_is_solved_without_executing_javascript(
     assert calls == 2
 
 
+def test_exact_camera_proof_challenge_is_solved_for_html_detail_source(
+    tmp_path: Path,
+) -> None:
+    source = replace(
+        _source(),
+        url="https://documenti.camera.it/vote",
+        allowed_hosts=frozenset({"documenti.camera.it"}),
+        media_types=frozenset({"text/html"}),
+    )
+    hint = "a" * 32
+    expected = hashlib.sha1(b"107").hexdigest()
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text=(
+                    '<form id="js-challenge-form" action="/vote" method="get">'
+                    f'<input type="hidden" name="hint" value="{hint}"/>'
+                    f'</form><script>var x =100; var y = "{expected}";</script>'
+                ),
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<html><h1>Votazione nominale n. 1</h1></html>",
+        )
+
+    artifact = SafeFetcher(
+        ArtifactStore(tmp_path),
+        transport=httpx.MockTransport(handler),
+        resolver=lambda host: ["93.184.216.34"],
+    ).fetch(source)
+
+    assert b"Votazione nominale" in artifact.path.read_bytes()
+    assert calls == 2
+
+
 @pytest.mark.parametrize(
     "address", ["127.0.0.1", "10.0.0.2", "169.254.169.254", "::1", "fe80::1"]
 )

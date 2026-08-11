@@ -34,7 +34,12 @@ class QueryServiceContract(Protocol):
     def get_person(self, person_id: str) -> CanonicalRecord | None: ...
 
     def list_person_votes(
-        self, person_id: str, *, limit: int, cursor: str | None
+        self,
+        person_id: str,
+        *,
+        limit: int,
+        cursor: str | None,
+        release_id: str | None = None,
     ) -> VoterPage: ...
 
     def list_roll_calls(
@@ -158,6 +163,7 @@ def create_web_router(
                 person_id,
                 limit=50,
                 cursor=None,
+                release_id=record.release_id,
             )
             error = error or votes_error
         return templates.TemplateResponse(

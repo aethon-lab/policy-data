@@ -19,6 +19,7 @@ from policy_data.api.schemas import (
     CanonicalPageResponse,
     CanonicalRecordResponse,
     HealthResponse,
+    PersonRecordResponse,
     VoterPageResponse,
     VoterResponse,
 )
@@ -43,7 +44,12 @@ class QueryServiceContract(Protocol):
     ) -> CanonicalPage: ...
     def get_person(self, person_id: str) -> CanonicalRecord | None: ...
     def list_person_votes(
-        self, person_id: str, *, limit: int, cursor: str | None
+        self,
+        person_id: str,
+        *,
+        limit: int,
+        cursor: str | None,
+        release_id: str | None = None,
     ) -> VoterPage: ...
     def list_groups(
         self,
@@ -365,6 +371,13 @@ def create_app(
             data_through=record.data_through,
         )
 
+    def person_record_response(record: Any) -> PersonRecordResponse:
+        return PersonRecordResponse(
+            item=record.item,
+            release_id=record.release_id,
+            data_through=record.data_through,
+        )
+
     async def run_collection(
         method: Callable[..., Any], **kwargs: Any
     ) -> CanonicalPageResponse:
@@ -415,19 +428,19 @@ def create_app(
 
     @app.get(
         "/api/v1/people/{person_id}",
-        response_model=CanonicalRecordResponse,
+        response_model=PersonRecordResponse,
         tags=["canonical"],
         responses=common_errors,
     )
     async def get_person(
         person_id: str,
         principal: Annotated[object | JSONResponse, Depends(require_api_key)],
-    ) -> CanonicalRecordResponse | JSONResponse:
+    ) -> PersonRecordResponse | JSONResponse:
         if isinstance(principal, JSONResponse):
             return principal
         record = await run_in_threadpool(query_service.get_person, person_id)
         return (
-            record_response(record)
+            person_record_response(record)
             if record
             else problem(404, "not-found", "Not found", "Person not found.")
         )

@@ -6,6 +6,7 @@ import ipaddress
 import re
 import socket
 from collections.abc import Callable, Iterable
+from itertools import chain
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
@@ -96,13 +97,18 @@ class SafeFetcher:
                         .strip()
                         .lower()
                     )
-                    if (
-                        media_type == "text/html"
-                        and "text/html" not in source.media_types
-                    ):
-                        challenge_body = b"".join(
-                            self._bounded_chunks(response.iter_bytes(), 16_384)
-                        )
+                    response_chunks = iter(response.iter_bytes())
+                    buffered_chunks: list[bytes] = []
+                    if media_type == "text/html":
+                        buffered_size = 0
+                        while buffered_size < 16_384:
+                            try:
+                                chunk = next(response_chunks)
+                            except StopIteration:
+                                break
+                            buffered_chunks.append(chunk)
+                            buffered_size += len(chunk)
+                        challenge_body = b"".join(buffered_chunks)[:16_384]
                         challenge_url = self._camera_challenge_url(url, challenge_body)
                         if challenge_url is not None:
                             url = challenge_url
@@ -123,7 +129,9 @@ class SafeFetcher:
                     try:
                         return self.store.persist_stream(
                             source,
-                            self._checked_chunks(response.iter_bytes(), media_type),
+                            self._checked_chunks(
+                                chain(buffered_chunks, response_chunks), media_type
+                            ),
                             max_bytes=source.max_bytes,
                             media_type=media_type,
                             etag=response.headers.get("etag"),

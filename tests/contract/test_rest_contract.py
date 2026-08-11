@@ -221,6 +221,17 @@ def test_versioned_canonical_resources_share_release_contract(tmp_path: Path) ->
         assert response.json()["release_id"] == "release-test"
         assert response.json()["data_through"] == "2026-01-22"
 
+    schema = client.get("/openapi.json").json()
+    person_schema = schema["components"]["schemas"]["PersonProfileResponse"]
+    assert "coverage" in person_schema["properties"]
+    assert "vote_summary" in person_schema["properties"]
+    assert (
+        schema["paths"]["/api/v1/people/{person_id}"]["get"]["responses"]["200"][
+            "content"
+        ]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/PersonRecordResponse"
+    )
+
 
 def test_unmanifested_and_traversal_downloads_are_not_served(tmp_path: Path) -> None:
     _release(tmp_path)

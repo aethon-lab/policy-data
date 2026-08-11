@@ -9,8 +9,14 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from policy_data.api.schemas import VoterResponse
+from policy_data.api.schemas import PersonProfileResponse
 from policy_data.domain.enums import ChamberCode, VotePosition
-from policy_data.mcp.schemas import McpCanonicalPage, McpCanonicalRecord, McpVoterPage
+from policy_data.mcp.schemas import (
+    McpCanonicalPage,
+    McpCanonicalRecord,
+    McpPersonRecord,
+    McpVoterPage,
+)
 from policy_data.query.filters import VoteQuery
 from policy_data.query.results import CanonicalPage, CanonicalRecord, VoterPage
 
@@ -42,7 +48,12 @@ class QueryServiceContract(Protocol):
     ) -> CanonicalPage: ...
     def get_roll_call(self, roll_call_id: str) -> CanonicalRecord | None: ...
     def list_person_votes(
-        self, person_id: str, *, limit: int, cursor: str | None
+        self,
+        person_id: str,
+        *,
+        limit: int,
+        cursor: str | None,
+        release_id: str | None = None,
     ) -> VoterPage: ...
     def list_roll_call_positions(
         self, roll_call_id: str, *, limit: int, cursor: str | None
@@ -164,15 +175,23 @@ def create_mcp_server(query_service: QueryServiceContract) -> MCPServer[Any]:
 
     @server.tool(
         name="get_person",
-        description="Retrieve one canonical person and official disclosure links.",
+        description=(
+            "Retrieve one canonical person with source identities, dated mandates and "
+            "group memberships, vote summary, explicit data coverage, and official "
+            "disclosure links. Interpret zero recorded votes together with coverage."
+        ),
         annotations=read_only,
         structured_output=True,
     )
-    async def get_person(person_id: Identifier) -> McpCanonicalRecord:
+    async def get_person(person_id: Identifier) -> McpPersonRecord:
         record = await run_in_threadpool(query_service.get_person, person_id)
         if record is None:
             raise ValueError("person not found")
-        return canonical_record(record)
+        return McpPersonRecord(
+            item=PersonProfileResponse.model_validate(record.item),
+            release_id=record.release_id,
+            data_through=record.data_through,
+        )
 
     @server.tool(
         name="search_roll_calls",

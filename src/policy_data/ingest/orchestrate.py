@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -105,9 +106,62 @@ class OfficialRefresh:
                 + ", ".join(missing)
             )
         acquire = self._acquire_cached if use_cached else self._acquire
-        acquired = tuple(acquire(source) for source in self.registry.all())
+        acquired_list = [acquire(source) for source in self.registry.all()]
+        detail_sources = self._discover_camera_detail_sources(tuple(acquired_list))
+        configured_urls = {item.definition.url for item in acquired_list}
+        pending_details = [
+            source for source in detail_sources if source.url not in configured_urls
+        ]
+        if pending_details:
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                acquired_list.extend(executor.map(acquire, pending_details))
+        acquired = tuple(acquired_list)
         release = self.assemble(acquired)
         return self.builder.build(release)
+
+    def _discover_camera_detail_sources(
+        self, acquired: tuple[AcquiredSource, ...]
+    ) -> tuple[SourceDefinition, ...]:
+        by_role: dict[str, list[AcquiredSource]] = defaultdict(list)
+        for item in acquired:
+            if item.definition.role is not None:
+                by_role[item.definition.role].append(item)
+        required = (
+            "camera_votes_rdf",
+            "camera_deputies_rdf",
+            "camera_mandates_rdf",
+            "camera_groups_rdf",
+        )
+        if any(not by_role[role] for role in required):
+            return ()
+        camera = CameraAdapter().normalize(
+            CameraArtifactSet(
+                votes_rdf=by_role["camera_votes_rdf"][0].body,
+                deputies_rdf=by_role["camera_deputies_rdf"][0].body,
+                mandates_rdf=by_role["camera_mandates_rdf"][0].body,
+                groups_rdf=by_role["camera_groups_rdf"][0].body,
+                detail_html={},
+            )
+        )
+        base = by_role["camera_votes_rdf"][0].definition
+        return tuple(
+            SourceDefinition(
+                source_id=f"camera_vote_detail_xix_{roll.source_vote_id}",
+                publisher=base.publisher,
+                dataset=f"Dettaglio votazione Camera XIX {roll.source_vote_id}",
+                legislature=base.legislature,
+                chamber=base.chamber,
+                url=roll.detail_url,
+                allowed_hosts=frozenset({"documenti.camera.it"}),
+                media_types=frozenset({"text/html"}),
+                max_bytes=4 * 1024 * 1024,
+                license_id=base.license_id,
+                adapter_version=base.adapter_version,
+                role="camera_vote_detail",
+            )
+            for roll in camera.roll_calls
+            if not roll.is_secret and roll.detail_url is not None
+        )
 
     def _acquire(self, source: SourceDefinition) -> AcquiredSource:
         if source.role is None:
