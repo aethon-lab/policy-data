@@ -222,3 +222,16 @@ def test_aliases_are_permanent_and_review_backed(tmp_path: Path) -> None:
         )
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute("DELETE FROM person_aliases")
+
+
+def test_person_profile_lookup_indexes_exist(tmp_path: Path) -> None:
+    connection = _canonical(tmp_path)
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        )
+    }
+
+    assert "idx_source_identities_person" in indexes
+    assert "idx_memberships_mandate" in indexes

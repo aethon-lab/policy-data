@@ -63,7 +63,9 @@ class FakeQueryService:
 
     def get_person(self, person_id):
         return CanonicalRecord(
-            {"person_id": person_id, "disclosures": []}, "release-test", "2026-01-22"
+            {"person_id": person_id, "display_name": "Ada Rossi", "disclosures": []},
+            "release-test",
+            "2026-01-22",
         )
 
     def list_roll_calls(self, **kwargs):
@@ -142,6 +144,10 @@ async def test_mcp_tool_is_small_read_only_and_structured() -> None:
     assert legislature_result.structured_content["data_through"] == "2026-01-22"
     status_result = await server.call_tool("get_dataset_status", {})
     assert status_result.structured_content["release_id"] == "release-test"
+    person_tool = next(item for item in tools if item.name == "get_person")
+    assert "coverage" in str(person_tool.output_schema)
+    person_result = await server.call_tool("get_person", {"person_id": "person:1"})
+    assert person_result.structured_content["item"]["vote_summary"]["recorded"] == 0
 
 
 def test_streamable_http_uses_the_same_bearer_key(tmp_path: Path) -> None:

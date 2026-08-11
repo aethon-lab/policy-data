@@ -1,1 +1,68 @@
-{% extends "base.html" %}{% block title %}Politico — Policy Data Italia{% endblock %}{% block content %}{% if error %}<p class="notice">{{ error }}</p>{% elif not record %}<section class="page-head"><h1>Persona non trovata</h1></section>{% else %}<section class="page-head"><div class="eyebrow">Profilo parlamentare</div><h1>{{ record.item.display_name }}</h1><code>{{ record.item.person_id }}</code></section><section class="prose standalone"><h2>Documenti patrimoniali</h2>{% for document in record.item.disclosures %}<p><a href="{{ document.official_url }}" rel="external">{{ document.official_label }} ↗</a></p>{% else %}<p>Nessun documento collegato dalla fonte.</p>{% endfor %}<h2>Voti registrati</h2>{% for vote in votes.items %}<p><strong>{{ vote.position.value }}</strong> · <a href="/votazioni/{{ vote.roll_call_id }}">{{ vote.measure_title }}</a> · {{ vote.occurred_at[:10] }}</p>{% else %}<p>Nessun voto disponibile.</p>{% endfor %}</section>{% endif %}{% endblock %}
+{% extends "base.html" %}
+{% block title %}{{ record.item.display_name if record else 'Politico' }} — Policy Data Italia{% endblock %}
+{% block content %}
+{% if error %}
+<p class="notice">{{ error }}</p>
+{% elif not record %}
+<section class="page-head"><h1>Persona non trovata</h1></section>
+{% else %}
+<section class="person-hero">
+  <div>
+    <div class="eyebrow">Profilo pubblico verificabile</div>
+    <h1>{{ record.item.display_name }}</h1>
+    <p class="person-id">{{ record.item.person_id }}</p>
+  </div>
+  <div class="machine-actions">
+    <span>Per agenti</span><a href="/docs/api">REST API</a><a href="/docs/mcp">MCP</a>
+    <code>get_person("{{ record.item.person_id }}")</code>
+  </div>
+</section>
+<section class="person-layout">
+  <main>
+    <section class="profile-section">
+      <div class="section-heading"><span>01</span><h2>Mandati e gruppi</h2></div>
+      {% for mandate in record.item.mandates %}
+      <article class="mandate-card">
+        <div><strong>{{ mandate.chamber|capitalize }} · Legislatura {{ mandate.legislature }}</strong><p>{{ mandate.starts_on or 'Data iniziale non disponibile' }} — {{ mandate.ends_on or 'data finale non disponibile' }}</p></div>
+        <div>
+        {% for membership in record.item.memberships if membership.mandate_id == mandate.mandate_id %}
+          <div class="group-history"><span>{{ membership.group_abbreviation or membership.group_name }}</span><p>{{ membership.group_name }} · {{ membership.starts_on }} — {{ membership.ends_on or 'data finale non disponibile' }}</p></div>
+        {% else %}<p class="muted">Gruppo non disponibile per questo mandato.</p>{% endfor %}
+        </div>
+      </article>
+      {% else %}<p class="profile-empty">Nessun mandato parlamentare collegato nelle fonti acquisite.</p>{% endfor %}
+    </section>
+    <section class="profile-section">
+      <div class="section-heading"><span>02</span><h2>Voti registrati</h2></div>
+      {% if record.item.vote_summary.recorded %}
+      <div class="metric-grid">
+        <div><strong>{{ record.item.vote_summary.recorded }}</strong><span>posizioni</span></div><div><strong>{{ record.item.vote_summary.yes }}</strong><span>favorevoli</span></div><div><strong>{{ record.item.vote_summary.no }}</strong><span>contrarie</span></div><div><strong>{{ record.item.vote_summary.abstain }}</strong><span>astensioni</span></div>
+      </div>
+      {% endif %}
+      <div class="vote-list">
+      {% for vote in votes.items %}
+        <article><span class="position position-{{ vote.position.value }}">{{ vote.position.value }}</span><div><a href="/votazioni/{{ vote.roll_call_id }}">{{ vote.measure_title or 'Votazione parlamentare' }}</a><small>{{ vote.occurred_at[:10] }} · {{ vote.chamber.value }}</small></div></article>
+      {% else %}<p class="profile-empty">Nessuna posizione individuale acquisita per questa persona. Controlla la copertura: non significa che la persona non abbia partecipato.</p>{% endfor %}
+      </div>
+    </section>
+    <section class="profile-section">
+      <div class="section-heading"><span>03</span><h2>Documenti patrimoniali</h2></div>
+      {% for document in record.item.disclosures %}<p><a href="{{ document.official_url }}" rel="external">{{ document.official_label }} ↗</a> <small>rilevato {{ document.observed_at[:10] }}</small></p>
+      {% else %}<p class="profile-empty">Nessun documento collegato dalle fonti acquisite. Questo non prova che il documento non sia stato pubblicato.</p>{% endfor %}
+    </section>
+  </main>
+  <aside class="profile-aside">
+    <section><div class="eyebrow">Copertura dati</div>
+      {% for scope in record.item.coverage %}
+      <article class="coverage-card coverage-{{ scope.coverage_status }}"><div><strong>{{ scope.chamber|capitalize }} · {{ scope.legislature }}</strong><span>{{ scope.coverage_status }}</span></div><p>{{ scope.recorded_person_votes }} posizioni su {{ scope.expected_person_votes }} votazioni con elenco individuale completo.</p><small>{{ scope.published_roll_calls }} votazioni pubblicate: {{ scope.complete_roll_calls }} complete, {{ scope.partial_roll_calls }} parziali, {{ scope.unavailable_roll_calls }} non disponibili, {{ scope.secret_roll_calls }} segrete.</small>{% if scope.coverage_status == 'unavailable' %}<small>La fonte pubblica le votazioni, ma non un elenco individuale completo per questo ambito.</small>{% elif scope.coverage_status == 'secret' %}<small>Le votazioni sono segrete: non esiste una posizione individuale pubblicabile.</small>{% elif scope.coverage_status == 'partial' %}<small>Non usare l'assenza di una riga come prova di assenza o non partecipazione.</small>{% endif %}</article>
+      {% else %}<p class="profile-empty">Copertura non applicabile: nessun mandato collegato.</p>{% endfor %}
+    </section>
+    <section><div class="eyebrow">Identità ufficiali</div>
+      {% for identity in record.item.identities %}<p><strong>{{ identity.authority_name }}</strong><br><code>{{ identity.source_person_id }}</code>{% if identity.same_as_uri %}<br><a href="{{ identity.same_as_uri }}" rel="external">Fonte ufficiale ↗</a>{% endif %}</p>
+      {% else %}<p class="profile-empty">Nessuna identità sorgente collegata.</p>{% endfor %}
+    </section>
+    <p class="release-note">Snapshot <strong>{{ record.release_id }}</strong><br>Dati fino al {{ record.data_through }}</p>
+  </aside>
+</section>
+{% endif %}
+{% endblock %}

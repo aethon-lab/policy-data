@@ -246,8 +246,12 @@ CREATE TABLE IF NOT EXISTS releases (
 -- official-title semantics and is not required for the bounded structural paths.
 CREATE INDEX IF NOT EXISTS idx_mandates_person_scope
     ON mandates(person_id, legislature_number, chamber_code, mandate_id);
+CREATE INDEX IF NOT EXISTS idx_source_identities_person
+    ON source_identities(canonical_person_id, authority_id, source_person_id);
 CREATE INDEX IF NOT EXISTS idx_groups_scope
     ON political_groups(legislature_number, chamber_code, group_id);
+CREATE INDEX IF NOT EXISTS idx_memberships_mandate
+    ON memberships(mandate_id, starts_on, membership_id);
 CREATE INDEX IF NOT EXISTS idx_roll_calls_scope_order
     ON roll_calls(legislature_number, chamber_code, occurred_at DESC, roll_call_id);
 CREATE INDEX IF NOT EXISTS idx_votes_roll_call_order

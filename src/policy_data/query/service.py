@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterator
 
-from policy_data.domain.enums import ChamberCode, VotePosition
+from policy_data.domain.enums import ChamberCode, NormalizationStatus, VotePosition
 from policy_data.ingest.publish import read_active_release
 from policy_data.query.filters import VoteQuery
 from policy_data.query.pagination import (
@@ -35,6 +35,15 @@ class NoActiveRelease(RuntimeError):
 def _like_pattern(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+_PROFILE_POSITION_FIELDS = tuple(
+    (position.value, position) for position in VotePosition
+)
+
+
+def _placeholders(values: tuple[object, ...]) -> str:
+    return ", ".join("?" for _ in values)
 
 
 class QueryService:
@@ -85,6 +94,7 @@ class QueryService:
         *,
         limit: int = 25,
         cursor: str | None = None,
+        release_id: str | None = None,
     ) -> VoterPage:
         if isinstance(limit, bool) or limit <= 0 or limit > self.max_page_size:
             raise ValueError(f"limit must be between 1 and {self.max_page_size}")
@@ -99,8 +109,16 @@ class QueryService:
         state = self.cursors.decode(cursor) if cursor else None
         if state is not None and state.filter_digest != digest:
             raise InvalidCursor("cursor does not belong to these filters")
+        if (
+            state is not None
+            and release_id is not None
+            and state.release_id != release_id
+        ):
+            raise InvalidCursor("cursor does not belong to the requested release")
         release_id = (
-            state.release_id if state else read_active_release(self.release_root)
+            state.release_id
+            if state
+            else release_id or read_active_release(self.release_root)
         )
         if release_id is None:
             raise NoActiveRelease("no active canonical release")
@@ -276,14 +294,140 @@ class QueryService:
         )
 
     def get_person(self, person_id: str) -> CanonicalRecord | None:
+        position_columns = ",\n                           ".join(
+            f"sum(CASE WHEN normalized_position = ? THEN 1 ELSE 0 END) AS {field}_count"
+            for field, _ in _PROFILE_POSITION_FIELDS
+        )
         return self._record(
-            """SELECT people.person_id, people.display_name,
-               (SELECT json_group_array(json_object('disclosure_id', d.disclosure_id, 'official_label', d.official_label, 'official_url', d.official_url, 'observed_at', d.observed_at))
-                  FROM mandates m JOIN disclosure_documents d USING(mandate_id)
-                 WHERE m.person_id = people.person_id) AS disclosures
-               FROM people WHERE person_id = ?""",
-            (person_id,),
-            json_fields=("disclosures",),
+            f"""WITH target_person AS (
+                    SELECT person_id, display_name FROM people WHERE person_id = ?
+                ), person_mandates AS (
+                    SELECT m.* FROM mandates m JOIN target_person USING(person_id)
+                ), person_votes AS MATERIALIZED (
+                    SELECT v.* FROM votes v JOIN person_mandates USING(mandate_id)
+                ), votes_by_mandate AS (
+                    SELECT mandate_id,
+                           count(*) AS recorded,
+                           count(DISTINCT roll_call_id) AS recorded_roll_calls,
+                           sum(CASE WHEN normalization_status = ? THEN 1 ELSE 0 END) AS normalized,
+                           {position_columns},
+                           sum(CASE WHEN normalized_position IS NULL THEN 1 ELSE 0 END) AS unmapped_count
+                      FROM person_votes GROUP BY mandate_id
+                )
+                SELECT target_person.person_id, target_person.display_name,
+               (SELECT json_group_array(json_object(
+                    'authority_id', identity.authority_id,
+                    'authority_name', identity.authority_name,
+                    'chamber', identity.chamber_code,
+                    'source_person_id', identity.source_person_id,
+                    'source_display_name', identity.source_display_name,
+                    'same_as_uri', identity.same_as_uri
+                )) FROM (
+                    SELECT i.authority_id, a.name AS authority_name, a.chamber_code,
+                           i.source_person_id, i.display_name AS source_display_name,
+                           i.same_as_uri
+                      FROM source_identities i
+                      JOIN source_authorities a USING(authority_id)
+                      JOIN target_person ON target_person.person_id = i.canonical_person_id
+                     ORDER BY a.chamber_code, i.authority_id, i.source_person_id
+                ) identity) AS identities,
+               (SELECT json_group_array(json_object(
+                    'mandate_id', ordered_mandates.mandate_id,
+                    'legislature', ordered_mandates.legislature_number,
+                    'chamber', ordered_mandates.chamber_code,
+                    'starts_on', ordered_mandates.starts_on,
+                    'ends_on', ordered_mandates.ends_on
+                )) FROM (
+                    SELECT * FROM person_mandates
+                     ORDER BY legislature_number DESC, chamber_code, starts_on
+                ) ordered_mandates) AS mandates,
+               (SELECT json_group_array(json_object(
+                    'membership_id', membership.membership_id,
+                    'mandate_id', membership.mandate_id,
+                    'group_id', membership.group_id,
+                    'group_name', membership.group_name,
+                    'group_abbreviation', membership.group_abbreviation,
+                    'legislature', membership.legislature_number,
+                    'chamber', membership.chamber_code,
+                    'starts_on', membership.starts_on,
+                    'ends_on', membership.ends_on
+                )) FROM (
+                    SELECT ms.*, g.name AS group_name,
+                           g.abbreviation AS group_abbreviation
+                      FROM memberships ms
+                      JOIN person_mandates USING(mandate_id)
+                      JOIN political_groups g USING(group_id, legislature_number, chamber_code)
+                     ORDER BY ms.starts_on DESC, ms.membership_id
+                ) membership) AS memberships,
+               (SELECT json_object(
+                    'recorded', coalesce(sum(recorded), 0),
+                    'normalized', coalesce(sum(normalized), 0),
+                    {", ".join(f"'{field}', coalesce(sum({field}_count), 0)" for field, _ in _PROFILE_POSITION_FIELDS)},
+                    'unmapped', coalesce(sum(unmapped_count), 0)
+                ) FROM votes_by_mandate) AS vote_summary,
+               (SELECT json_group_array(json_object(
+                    'mandate_id', scope.mandate_id,
+                    'legislature', scope.legislature_number,
+                    'chamber', scope.chamber_code,
+                    'published_roll_calls', scope.published_roll_calls,
+                    'complete_roll_calls', scope.complete_roll_calls,
+                    'partial_roll_calls', scope.partial_roll_calls,
+                    'unavailable_roll_calls', scope.unavailable_roll_calls,
+                    'secret_roll_calls', scope.secret_roll_calls,
+                    'roll_calls_with_positions', scope.roll_calls_with_positions,
+                    'recorded_person_votes', scope.recorded_person_votes,
+                    'expected_person_votes', scope.complete_roll_calls,
+                    'coverage_status', CASE
+                        WHEN scope.published_roll_calls = 0 THEN 'not_applicable'
+                        WHEN scope.partial_roll_calls > 0 THEN 'partial'
+                        WHEN scope.unavailable_roll_calls > 0 THEN 'unavailable'
+                        WHEN scope.complete_roll_calls = 0 AND scope.secret_roll_calls > 0 THEN 'secret'
+                        WHEN scope.recorded_person_votes < scope.complete_roll_calls THEN 'partial'
+                        ELSE 'complete'
+                    END
+                )) FROM (
+                    SELECT m.mandate_id, m.legislature_number, m.chamber_code,
+                           count(DISTINCT rc.roll_call_id) AS published_roll_calls,
+                           count(DISTINCT CASE WHEN rc.position_coverage = 'complete' THEN rc.roll_call_id END) AS complete_roll_calls,
+                           count(DISTINCT CASE WHEN rc.position_coverage = 'partial' THEN rc.roll_call_id END) AS partial_roll_calls,
+                           count(DISTINCT CASE WHEN rc.position_coverage = 'unavailable' THEN rc.roll_call_id END) AS unavailable_roll_calls,
+                           count(DISTINCT CASE WHEN rc.position_coverage = 'secret' THEN rc.roll_call_id END) AS secret_roll_calls,
+                           count(DISTINCT CASE WHEN rc.positions_available = 1 THEN rc.roll_call_id END) AS roll_calls_with_positions,
+                           coalesce(max(vbm.recorded_roll_calls), 0) AS recorded_person_votes
+                      FROM person_mandates m
+                      LEFT JOIN roll_calls rc
+                        ON rc.legislature_number = m.legislature_number
+                       AND rc.chamber_code = m.chamber_code
+                       AND (m.starts_on IS NULL OR rc.occurred_at >= m.starts_on)
+                       AND (m.ends_on IS NULL OR rc.occurred_at < date(m.ends_on, '+1 day'))
+                      LEFT JOIN votes_by_mandate vbm USING(mandate_id)
+                     GROUP BY m.mandate_id, m.legislature_number, m.chamber_code
+                     ORDER BY m.legislature_number DESC, m.chamber_code, m.mandate_id
+               ) scope) AS coverage,
+               (SELECT json_group_array(json_object(
+                    'disclosure_id', disclosure_id,
+                    'official_label', official_label,
+                    'official_url', official_url,
+                    'observed_at', observed_at
+                )) FROM (
+                    SELECT d.* FROM person_mandates m
+                    JOIN disclosure_documents d USING(mandate_id)
+                    ORDER BY d.observed_at DESC, d.disclosure_id
+                )) AS disclosures
+               FROM target_person""",
+            (
+                person_id,
+                NormalizationStatus.NORMALIZED.value,
+                *(position.value for _, position in _PROFILE_POSITION_FIELDS),
+            ),
+            json_fields=(
+                "identities",
+                "mandates",
+                "memberships",
+                "vote_summary",
+                "coverage",
+                "disclosures",
+            ),
         )
 
     def list_groups(
@@ -362,10 +506,18 @@ class QueryService:
         )
 
     def list_person_votes(
-        self, person_id: str, *, limit: int = 25, cursor: str | None = None
+        self,
+        person_id: str,
+        *,
+        limit: int = 25,
+        cursor: str | None = None,
+        release_id: str | None = None,
     ) -> VoterPage:
         return self.find_voters(
-            VoteQuery(person_id=person_id), limit=limit, cursor=cursor
+            VoteQuery(person_id=person_id),
+            limit=limit,
+            cursor=cursor,
+            release_id=release_id,
         )
 
     def list_roll_call_positions(
