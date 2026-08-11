@@ -4,7 +4,11 @@ from rdflib import Graph, Namespace
 from rdflib.namespace import RDF
 
 from policy_data.domain.enums import VotePosition
-from policy_data.sources.camera import CameraArtifactSet, CameraAdapter
+from policy_data.sources.camera import (
+    CameraArtifactSet,
+    CameraAdapter,
+    canonical_camera_detail_url,
+)
 
 FIXTURES = Path("tests/fixtures/camera")
 OCD = Namespace("http://dati.camera.it/ocd/")
@@ -14,6 +18,17 @@ def _as_ntriples(path: Path) -> bytes:
     graph = Graph().parse(path, format="xml")
     serialized = graph.serialize(format="nt")
     return serialized.encode() if isinstance(serialized, str) else serialized
+
+
+def test_camera_detail_links_upgrade_only_the_official_host_to_https() -> None:
+    assert (
+        canonical_camera_detail_url("http://documenti.camera.it/apps/vote")
+        == "https://documenti.camera.it/apps/vote"
+    )
+    assert (
+        canonical_camera_detail_url("http://example.com/apps/vote")
+        == "http://example.com/apps/vote"
+    )
 
 
 def test_camera_accepts_the_ntriples_serialization_used_by_official_dumps() -> None:

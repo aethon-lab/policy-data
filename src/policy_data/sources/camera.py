@@ -121,6 +121,13 @@ def map_camera_position(raw: str) -> VotePosition:
         raise CameraQuarantine(f"unmapped Camera position: {raw!r}") from error
 
 
+def canonical_camera_detail_url(value: str) -> str:
+    insecure_prefix = "http://documenti.camera.it/"
+    if value.startswith(insecure_prefix):
+        return "https://documenti.camera.it/" + value.removeprefix(insecure_prefix)
+    return value
+
+
 def parse_camera_boolean(value: Literal) -> ParsedBoolean:
     datatype = str(value.datatype or "")
     lexical = str(value).strip().casefold()
@@ -337,7 +344,11 @@ class CameraAdapter:
                 quarantined.append(f"{subject}: {error}")
                 continue
             detail_value = votes_graph.value(subject, DC.relation)
-            detail_url = str(detail_value) if detail_value is not None else None
+            detail_url = (
+                canonical_camera_detail_url(str(detail_value))
+                if detail_value is not None
+                else None
+            )
             item_value = votes_graph.value(subject, OCD.rif_attoCamera)
             item_uri = str(item_value) if item_value is not None else None
             total_predicates = {
